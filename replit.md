@@ -1,44 +1,73 @@
-# [Project name]
+# Oracle Master-Swarm Ecosystem V4.0
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Telegram üzerinden yönetilen, 5 uzman yapay zeka ajanından oluşan otonom bilişsel işletim sistemi. Kısa bir mesaj yazın — sistem genişletir, doğru ajana yönlendirir ve sonucu Telegram'a gönderir.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `Oracle Swarm Bot` workflow'u — Ana bot süreci (Python, Telegram polling)
+- `pnpm --filter @workspace/api-server run dev` — API server (port 5000)
+- `pnpm run typecheck` — TypeScript kontrolü
+- Bot başlatma: `cd oracle-swarm && python3 main.py`
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- **Dil:** Python 3.11
+- **API:** FastAPI + Uvicorn
+- **Ajan Orkestrasyon:** LangGraph (StateGraph)
+- **Kullanıcı Arayüzü:** Telegram Bot (python-telegram-bot v22)
+- **LLM Beyin:** OpenAI API (gpt-4o-mini / gpt-4o)
+- **Veritabanı / Bellek:** Supabase (PostgreSQL + pgvector)
+- **Async Kuyruk:** Celery + Redis (isteğe bağlı)
+- **Node.js altyapısı:** pnpm workspaces, Express 5, Drizzle ORM
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `oracle-swarm/main.py` — Giriş noktası, sistem başlatma
+- `oracle-swarm/core/graph.py` — LangGraph state machine (CEO Router)
+- `oracle-swarm/core/llm.py` — OpenAI LLM çağrıları + Extrapolation motoru
+- `oracle-swarm/core/memory.py` — Supabase kalıcı bellek
+- `oracle-swarm/core/config.py` — Ortam değişkenleri (pydantic-settings)
+- `oracle-swarm/agents/` — 5 ajan modülü
+- `oracle-swarm/bot_handler/` — Telegram bot handler + klavyeler
+- `oracle-swarm/db/schema.sql` — Supabase tablo şeması (manuel çalıştır)
+- `oracle-swarm/tasks/` — Celery async görev kuyruğu
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- `telegram/` klasörü `bot_handler/` olarak adlandırıldı — python-telegram-bot kütüphanesiyle isim çakışmasını önlemek için.
+- LangGraph StateGraph kullanıldı — her ajan bir node, CEO Router conditional edge ile yönlendiriyor.
+- Extrapolation Engine: Kısa (10 kelime) kullanıcı girdisi gpt-4o ile 10 sayfalık iş direktifine dönüştürülüyor.
+- HFT Quant ajanı ASLA otomatik alım/satım yapmaz — sadece analiz, Telegram inline onay butonu üretiyor.
+- Edge Daemon cloud-side çalışıyor; approved_commands whitelist'i dışında hiçbir işlem yapmaz.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- **CEO Router:** Kısa mesajı genişletip doğru ajana yönlendirir
+- **SWE Agent:** Kod üretir, sandbox'ta test eder, hataları otomatik düzeltir (Zero-Defect Loop)
+- **QUANT Agent:** BTC/ETH/hisse teknik analizi (RSI, EMA), Telegram inline onay butonu
+- **Marketing Agent:** Stealth scraping + NLP email üretimi (Balıkesir/Bursa OSB odaklı)
+- **Edge Agent:** Sistem durumu ve disk/bellek raporları (cloud-side, güvenli)
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Sistem tamamen cloud'da çalışmalı, bilgisayarda kurulum gerektirmemeli
+- Kullanıcı arayüzü yalnızca Telegram olmalı
+- HFT ajanı asla otomatik işlem açmamalı
+- Tüm aksiyonlar Telegram inline butonuyla onaya sunulmalı
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Supabase tabloları ilk kurulumda `oracle-swarm/db/schema.sql` ile manuel oluşturulmalı
+- `telegram/` klasörü python-telegram-bot ile çakışır — klasör adı `bot_handler/` olmalı
+- OpenAI API key `OPENAI_API_KEY` secret'ı olarak tanımlı olmalı
+- LangGraph 1.x API'sinde `StateGraph` ve `END` import yolları değişti: `from langgraph.graph import StateGraph, END`
+
+## Secrets gerekli
+
+- `TELEGRAM_BOT_TOKEN` — BotFather token (sadece sayı:harf formatı)
+- `SUPABASE_URL` — https://xxx.supabase.co
+- `SUPABASE_SERVICE_KEY` — Supabase service role key
+- `OPENAI_API_KEY` — OpenAI API key
 
 ## Pointers
 

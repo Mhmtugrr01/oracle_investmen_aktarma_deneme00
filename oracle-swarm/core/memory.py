@@ -9,6 +9,9 @@ def get_supabase() -> Client:
     return create_client(settings.supabase_url, settings.supabase_service_key)
 
 
+_memory_fallback: list[dict] = []
+
+
 async def save_task(
     user_id: str,
     user_input: str,
@@ -17,24 +20,30 @@ async def save_task(
     result: str,
     status: str = "completed",
 ) -> str | None:
+    import uuid
+    task_id = str(uuid.uuid4())
+    record = {
+        "id": task_id,
+        "user_id": user_id,
+        "user_input": user_input,
+        "expanded_prompt": expanded_prompt,
+        "agent": agent,
+        "result": result[:500],
+        "status": status,
+        "created_at": datetime.utcnow().isoformat(),
+    }
     try:
         sb = get_supabase()
-        data = {
-            "user_id": user_id,
-            "user_input": user_input,
-            "expanded_prompt": expanded_prompt,
-            "agent": agent,
-            "result": result,
-            "status": status,
-            "created_at": datetime.utcnow().isoformat(),
-        }
-        res = sb.table("oracle_tasks").insert(data).execute()
-        task_id = res.data[0]["id"] if res.data else None
-        logger.info(f"Task saved: {task_id}")
-        return task_id
+        res = sb.table("oracle_tasks").insert(record).execute()
+        saved_id = res.data[0]["id"] if res.data else task_id
+        logger.info(f"Task saved to Supabase: {saved_id}")
+        return saved_id
     except Exception as e:
-        logger.error(f"Memory save failed: {e}")
-        return None
+        logger.warning(f"Supabase save failed (using local fallback): {e}")
+        _memory_fallback.append(record)
+        if len(_memory_fallback) > 50:
+            _memory_fallback.pop(0)
+        return task_id
 
 
 async def get_recent_tasks(user_id: str, limit: int = 10) -> list[dict]:
@@ -50,8 +59,9 @@ async def get_recent_tasks(user_id: str, limit: int = 10) -> list[dict]:
         )
         return res.data or []
     except Exception as e:
-        logger.error(f"Memory fetch failed: {e}")
-        return []
+        logger.warning(f"Supabase fetch failed (using local fallback): {e}")
+        user_tasks = [t for t in _memory_fallback if t.get("user_id") == str(user_id)]
+        return list(reversed(user_tasks))[-limit:]
 
 
 async def init_tables():
