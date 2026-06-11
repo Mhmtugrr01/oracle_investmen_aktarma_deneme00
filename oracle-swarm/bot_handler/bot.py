@@ -11,36 +11,57 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from core.config import settings
 from core.graph import oracle_graph, OracleState
-from core.memory import get_recent_tasks, init_tables
+from core.memory import get_recent_tasks
+from core.scheduler import register_alert_callback, unregister_alert_callback
 from bot_handler.keyboards import (
     main_menu_keyboard,
     back_keyboard,
-    quant_action_keyboard,
-    marketing_send_keyboard,
 )
 from loguru import logger
 
-
 PROCESSING_USERS: set[int] = set()
+_application: Application | None = None
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    user_id = str(user.id)
+
+    async def send_alert(uid: str, msg: str):
+        try:
+            await _application.bot.send_message(
+                chat_id=int(uid),
+                text=msg,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception as e:
+            logger.error(f"Alert send failed: {e}")
+
+    register_alert_callback(user_id, send_alert)
+
     welcome = f"""🧠 *ORACLE MASTER-SWARM V4.0*
 ━━━━━━━━━━━━━━━━━━━━━━
 Hoş geldiniz, *{user.first_name}*.
 
 Ben Oracle CEO — Otonom Bilişsel İşletim Sisteminiz.
 
-Kısa bir fikir veya komut yazın (10 kelime yeterli).
-Sistemi genişletip doğru ajana yönlendireceğim.
+Kısa bir fikir veya komut yazın. Sistem;
+1️⃣ İsteğinizi genişletip doğru ajana yönlendirir
+2️⃣ Alt ajan sonucu üretir
+3️⃣ CEO Critic katmanı denetler, eksik varsa düzeltir
+4️⃣ Nihai ✅ onaylı sonucu size iletir
 
 🤖 *Mevcut Ajanlar:*
 • SWE — Yazılım Geliştirme
-• QUANT — Borsa/Kripto Analizi
+• QUANT — Borsa/Kripto + Makro Analizi
 • MARKETING — Satış & Scraping
 • EDGE — Sistem Kontrolü
-• CEO — Strateji & Rapor
+• FREELANCER — İş Bulma & Başvuru
+
+⏰ *Otomatik Alarmlar aktif:*
+• Saatlik piyasa taraması
+• 🌅 08:00 sabah brifing
+• Güçlü toplama/dağıtım tespitinde anlık uyarı
 
 Veya aşağıdaki menüyü kullanın:"""
 
@@ -55,42 +76,74 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """📖 *KULLANIM KILAVUZU*
 ━━━━━━━━━━━━━━━━━━━━━━
 *Komutlar:*
-/start — Ana menü
+/start — Ana menü + alarm kaydı
 /status — Sistem durumu
 /history — Son görevler
+/quant — Hızlı piyasa analizi
+/scan — Anlık piyasa taraması
 /help — Bu mesaj
 
-*Kullanım:*
-Sadece ne istediğinizi yazın:
-• "BTC analiz et"
-• "Bursa OSB elektrik firmaları bul"
-• "Telegram botu yaz"
+*Örnek Kullanımlar:*
+• "BTC ve ETH analiz et"
+• "Upwork'te Python uzmanı işi bul"
+• "Balıkesir OSB elektrik firmaları"
+• "FastAPI ile REST API yaz"
 • "Disk durumu nedir"
+• "Freelancer işleri ara"
 
-Sistem otomatik genişletip doğru ajana yönlendirir."""
+*CEO Critic Sistemi:*
+Her yanıt 2 katmandan geçer:
+1. Alt ajan cevap üretir
+2. CEO denetler ve eksik varsa tamamlar
+Sonuç ✅ işareti ile onaylı gelir."""
 
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_text = """📡 *SİSTEM DURUMU*
+    from core.scheduler import _scheduler
+    sched_status = "🟢 Aktif" if _scheduler and _scheduler.running else "🔴 Durdu"
+
+    status_text = f"""📡 *SİSTEM DURUMU*
 ━━━━━━━━━━━━━━━━━━━━━━
-🟢 CEO Router — Aktif
-🟢 SWE Mühendis — Aktif
-🟢 QUANT Gözcü — Aktif
-🟢 Marketing — Aktif
-🟢 Edge Daemon — Aktif
-🟢 Supabase Bellek — Bağlı
-🟢 Telegram API — Bağlı
+🟢 CEO Router + Critic  — Aktif
+🟢 SWE Mühendis         — Aktif
+🟢 QUANT Gözcü          — Aktif
+🟢 Marketing            — Aktif
+🟢 Freelancer           — Aktif
+🟢 Edge Daemon          — Aktif
+🟢 Supabase Bellek      — Bağlı
+🟢 Telegram API         — Bağlı
+{sched_status} Zamanlayıcı        — Saatlik Tarama
 ━━━━━━━━━━━━━━━━━━━━━━
-☁️ Ortam: Cloud (Replit)
-🔒 Güvenlik: Aktif"""
+☁️ Cloud (Replit) | 🧠 GPT-4o"""
 
     await update.message.reply_text(
         status_text,
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=back_keyboard(),
     )
+
+
+async def quant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    symbols = " ".join(args) if args else "BTC ETH AAPL altın"
+    await _process_user_input(update, f"piyasa analizi: {symbols}")
+
+
+async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = await update.message.reply_text(
+        "🔄 *Anlık piyasa taraması başlatılıyor...*",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    try:
+        from agents.hft_quant import run_scheduled_scan
+        result = await run_scheduled_scan(send_alert_fn=None)
+        if "kritik sinyal yok" in result.lower():
+            result = "✅ Tarama tamamlandı — Şu an kritik bir toplama/dağıtım sinyali yok."
+        await msg.edit_text(result, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        await msg.edit_text(f"❌ Tarama hatası: {e}", parse_mode=ParseMode.MARKDOWN)
 
 
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -119,8 +172,12 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     user_input = update.message.text.strip()
+    await _process_user_input(update, user_input)
+
+
+async def _process_user_input(update: Update, user_input: str):
+    user_id = update.effective_user.id
 
     if user_id in PROCESSING_USERS:
         await update.message.reply_text("⏳ Önceki görev işleniyor, lütfen bekleyin...")
@@ -133,7 +190,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     PROCESSING_USERS.add(user_id)
 
     thinking_msg = await update.message.reply_text(
-        "🧠 *CEO Router analiz ediyor...*\n⚙️ Prompt genişletiliyor ve ajan belirleniyor...",
+        "🧠 *CEO Router analiz ediyor...*\n⚙️ Prompt genişletiliyor...",
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -144,29 +201,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "expanded_prompt": "",
             "agent": "",
             "result": "",
+            "audited_result": "",
             "status": "pending",
             "task_id": None,
             "messages": [],
         }
 
         await thinking_msg.edit_text(
-            "🔄 *LangGraph işliyor...*\n⚡ Ajan devreye girdi.",
+            "🔄 *Ajan devrede...*\n🔍 CEO Critic denetim bekliyor...",
             parse_mode=ParseMode.MARKDOWN,
         )
 
         final_state = await oracle_graph.ainvoke(initial_state)
 
         agent = final_state.get("agent", "CEO")
-        result = final_state.get("result", "Sonuç alınamadı.")
-        task_id = final_state.get("task_id", "")
+        result = final_state.get("audited_result") or final_state.get("result", "Sonuç alınamadı.")
 
-        header = f"✅ *[{agent} AJAN] TAMAMLANDI*\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        header = f"✅ *[{agent}] CEO Onaylı*\n━━━━━━━━━━━━━━━━━━━━━━\n"
         full_result = header + result
 
         chunks = _split_message(full_result)
+        keyboard = _get_result_keyboard(agent, final_state)
+
         for i, chunk in enumerate(chunks):
             if i == 0:
-                keyboard = _get_result_keyboard(agent, task_id, final_state)
                 await thinking_msg.edit_text(
                     chunk,
                     parse_mode=ParseMode.MARKDOWN,
@@ -178,7 +236,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Message handler error: {e}")
         await thinking_msg.edit_text(
-            f"❌ *Hata oluştu:*\n`{str(e)[:300]}`\n\nLütfen tekrar deneyin.",
+            f"❌ *Hata:*\n`{str(e)[:300]}`",
             parse_mode=ParseMode.MARKDOWN,
         )
     finally:
@@ -200,10 +258,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("agent_"):
         agent = data.split("_")[1]
         prompts = {
-            "SWE": "SWE modunu seçtiniz. Geliştirmek istediğiniz sistemi/kodu yazın:",
-            "QUANT": "QUANT modunu seçtiniz. Analiz edilmesini istediğiniz sembolleri yazın (örn: BTC, AAPL):",
-            "MARKETING": "MARKETING modunu seçtiniz. Hedef sektör/bölge ve amacınızı yazın:",
-            "EDGE": "EDGE modunu seçtiniz. Sistem komutunu yazın (disk_report, status, temp_check):",
+            "SWE": "✍️ Geliştirmek istediğiniz sistemi/kodu yazın:",
+            "QUANT": "📊 Analiz edilmesini istediğiniz sembolleri yazın (örn: BTC ETH AAPL altın):",
+            "MARKETING": "📣 Hedef sektör/bölge ve amacınızı yazın:",
+            "EDGE": "💻 Sistem komutunu yazın (status, disk_report, memory_check, temp_check):",
+            "FREELANCER": "💼 Aradığınız iş türünü yazın (alan, bütçe, platform tercihi):",
         }
         await query.edit_message_text(
             f"🎯 *{agent} AJAN AKTİF*\n{prompts.get(agent, 'Komutunuzu yazın:')}",
@@ -218,7 +277,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             lines = ["📋 *SON 5 GÖREV*"]
             for i, t in enumerate(tasks, 1):
-                lines.append(f"{i}. [{t.get('agent','?')}] {t.get('user_input','')[:40]} — {t.get('status','?')}")
+                lines.append(f"{i}. [{t.get('agent','?')}] {t.get('user_input','')[:40]}")
             await query.edit_message_text(
                 "\n".join(lines),
                 parse_mode=ParseMode.MARKDOWN,
@@ -226,44 +285,61 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     elif data == "system_status":
+        from core.scheduler import _scheduler
+        sched = "🟢 Aktif" if _scheduler and _scheduler.running else "🔴 Durdu"
         await query.edit_message_text(
-            "📡 *SİSTEM DURUMU*\n🟢 Tüm sistemler aktif\n☁️ Cloud modu",
+            f"📡 *SİSTEM DURUMU*\n🟢 Tüm ajanlar aktif\n{sched} Zamanlayıcı\n☁️ Cloud modu",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=back_keyboard(),
         )
 
     elif data.startswith("quant_approve_"):
-        parts = data.split("_")
-        symbol = parts[2] if len(parts) > 2 else "?"
-        signal = parts[3] if len(parts) > 3 else "?"
         await query.edit_message_text(
-            f"✅ *ONAY KAYDEDİLDİ*\n{symbol} — {signal}\n\n⚠️ Bu sadece analiz onayıdır. Gerçek işlem açılmamıştır.\nGerçek alım/satım için yetkili aracı kurumunuzu kullanın.",
+            "✅ *ANALİZ ONAYLANDI*\n\n⚠️ Bu yalnızca analiz onayıdır.\nGerçek alım/satım için yetkili aracı kurumunuzu kullanın.\n🔒 Oracle ASLA otomatik işlem açmaz.",
             parse_mode=ParseMode.MARKDOWN,
         )
 
-    elif data == "quant_cancel" or data.startswith("reject_"):
+    elif data == "freelancer_apply_all":
+        await query.edit_message_text(
+            "📤 *BAŞVURULAR ONAYLANDI*\nTüm başvurular gönderilmek üzere işaretlendi.\n\n📆 5 gün sonra otomatik takip mesajları hazırlanacak.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    elif data in ("quant_cancel", "marketing_cancel", "freelancer_cancel") or data.startswith("reject_"):
         await query.edit_message_text("❌ *İşlem iptal edildi.*", parse_mode=ParseMode.MARKDOWN)
 
     elif data == "marketing_send_all":
         await query.edit_message_text(
-            "📤 *Email gönderimi onaylandı.*\nGerçek gönderim için SMTP entegrasyonu eklenmelidir.",
+            "📤 *Email gönderimi onaylandı.*\nGerçek gönderim için SMTP entegrasyonu aktif edilmeli.",
             parse_mode=ParseMode.MARKDOWN,
         )
 
-    elif data == "marketing_cancel":
-        await query.edit_message_text("❌ *Marketing görevi iptal edildi.*", parse_mode=ParseMode.MARKDOWN)
+    elif data == "main_menu":
+        await query.edit_message_text(
+            "🏠 Ana Menü",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_keyboard(),
+        )
 
 
-def _get_result_keyboard(agent: str, task_id: str, state: dict) -> InlineKeyboardMarkup | None:
+def _get_result_keyboard(agent: str, state: dict) -> InlineKeyboardMarkup | None:
     if agent == "QUANT":
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Analizi Onayla", callback_data=f"quant_approve_MARKET_LONG_75")],
-            [InlineKeyboardButton("🏠 Ana Menü", callback_data="main_menu")],
+            [InlineKeyboardButton("✅ Analizi Onayla", callback_data="quant_approve_ok")],
+            [InlineKeyboardButton("🔄 Yeni Tarama", callback_data="agent_QUANT"),
+             InlineKeyboardButton("🏠 Menü", callback_data="main_menu")],
         ])
     elif agent == "MARKETING":
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("📤 Email Gönderimini Onayla", callback_data="marketing_send_all")],
-            [InlineKeyboardButton("🏠 Ana Menü", callback_data="main_menu")],
+            [InlineKeyboardButton("❌ İptal", callback_data="marketing_cancel"),
+             InlineKeyboardButton("🏠 Menü", callback_data="main_menu")],
+        ])
+    elif agent == "FREELANCER":
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📨 Başvuruları Onayla", callback_data="freelancer_apply_all")],
+            [InlineKeyboardButton("❌ İptal", callback_data="freelancer_cancel"),
+             InlineKeyboardButton("🏠 Menü", callback_data="main_menu")],
         ])
     else:
         return InlineKeyboardMarkup([
@@ -282,12 +358,16 @@ def _split_message(text: str, max_len: int = 4000) -> list[str]:
 
 
 def build_application() -> Application:
+    global _application
     app = Application.builder().token(settings.telegram_bot_token).build()
+    _application = app
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("history", history_command))
+    app.add_handler(CommandHandler("quant", quant_command))
+    app.add_handler(CommandHandler("scan", scan_command))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 

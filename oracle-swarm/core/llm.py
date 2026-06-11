@@ -70,13 +70,14 @@ Türkçe yanıt ver. Profesyonel ve net ol."""
 
 async def detect_intent(expanded_prompt: str) -> str:
     system = """Aşağıdaki iş direktifini analiz et ve hangi ajana yönlendirileceğini belirt.
-Sadece şu değerlerden birini döndür: SWE | QUANT | MARKETING | EDGE | CEO
+Sadece şu değerlerden birini döndür: SWE | QUANT | MARKETING | EDGE | FREELANCER | CEO
 
-SWE: Yazılım geliştirme, kod yazma, sistem kurma
-QUANT: Borsa analizi, kripto, finansal veri
-MARKETING: Scraping, email, satış, lead generation
-EDGE: Sistem temizleme, lokal cihaz kontrolü
-CEO: Genel yönetim, strateji, rapor"""
+SWE: Yazılım geliştirme, kod yazma, uygulama geliştirme, sistem kurma
+QUANT: Borsa analizi, kripto, BTC, ETH, altın, hisse, teknik analiz, RSI, piyasa
+MARKETING: Scraping, email, satış, lead generation, müşteri bulma
+EDGE: Sistem durumu, disk, bellek, cihaz kontrolü
+FREELANCER: Freelancer iş arama, iş bulma, başvuru, Upwork, LinkedIn iş, proje teklifi
+CEO: Genel yönetim, strateji, rapor, genel sorular, soru-cevap"""
 
     intent = await llm_call(
         messages=[{"role": "user", "content": expanded_prompt}],
@@ -84,6 +85,6 @@ CEO: Genel yönetim, strateji, rapor"""
         temperature=0.1,
         max_tokens=20,
     )
-    intent = intent.strip().upper()
-    valid = {"SWE", "QUANT", "MARKETING", "EDGE", "CEO"}
+    intent = intent.strip().upper().split()[0]
+    valid = {"SWE", "QUANT", "MARKETING", "EDGE", "FREELANCER", "CEO"}
     return intent if intent in valid else "CEO"

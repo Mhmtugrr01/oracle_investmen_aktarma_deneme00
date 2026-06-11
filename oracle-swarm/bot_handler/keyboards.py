@@ -9,11 +9,14 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("📣 Marketing", callback_data="agent_MARKETING"),
-            InlineKeyboardButton("💻 Edge Sistem", callback_data="agent_EDGE"),
+            InlineKeyboardButton("💼 Freelancer", callback_data="agent_FREELANCER"),
         ],
         [
-            InlineKeyboardButton("📋 Son Görevler", callback_data="tasks_history"),
-            InlineKeyboardButton("📊 Sistem Durumu", callback_data="system_status"),
+            InlineKeyboardButton("💻 Edge Sistem", callback_data="agent_EDGE"),
+            InlineKeyboardButton("📋 Geçmiş", callback_data="tasks_history"),
+        ],
+        [
+            InlineKeyboardButton("📡 Sistem Durumu", callback_data="system_status"),
         ],
     ])
 

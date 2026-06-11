@@ -4,13 +4,15 @@ import sys
 from loguru import logger
 from core.config import settings
 from core.memory import init_tables
+from core.scheduler import start_scheduler, stop_scheduler
 
 
 async def main():
     logger.info("🚀 Oracle Master-Swarm V4.0 başlatılıyor...")
-    logger.info(f"☁️ Ortam: Cloud (Replit)")
+    logger.info("☁️ Ortam: Cloud (Replit)")
     logger.info(f"🤖 Telegram Bot Token: {'✅ Set' if settings.telegram_bot_token else '❌ Eksik'}")
     logger.info(f"🗄️ Supabase URL: {'✅ Set' if settings.supabase_url else '❌ Eksik'}")
+    logger.info(f"🧠 OpenAI Key: {'✅ Set' if settings.openai_api_key else '❌ Eksik'}")
 
     if not settings.telegram_bot_token:
         logger.error("TELEGRAM_BOT_TOKEN ortam değişkeni eksik!")
@@ -26,9 +28,6 @@ async def main():
 
     app = build_application()
 
-    logger.success("✅ Oracle Swarm sistemi hazır. Telegram bekleniyor...")
-    logger.info("📱 Botunuza /start mesajı gönderin")
-
     await app.initialize()
     await app.start()
     await app.updater.start_polling(
@@ -36,7 +35,12 @@ async def main():
         drop_pending_updates=True,
     )
 
+    logger.success("✅ Oracle Swarm sistemi hazır. Telegram bekleniyor...")
+    logger.info("📱 Botunuza /start mesajı gönderin")
     logger.success("🟢 Telegram polling aktif")
+
+    start_scheduler()
+    logger.success("⏰ Zamanlayıcı aktif — saatlik piyasa taraması + sabah brifing")
 
     stop_event = asyncio.Event()
 
@@ -50,6 +54,7 @@ async def main():
     await stop_event.wait()
 
     logger.info("🔄 Sistemi kapatıyorum...")
+    stop_scheduler()
     await app.updater.stop()
     await app.stop()
     await app.shutdown()
