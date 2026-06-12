@@ -2,6 +2,8 @@
 - [LLM cache sistemi](llm-cache.md) — 5dk in-memory cache, tekrar eden sorularda LLM çağrısı yapmaz
 - [Scheduler cooldown](scheduler-cooldown.md) — Aynı varlık için 4 saatte bir alarm; aşırı bildirim önlendi
 - [CoinGecko + FearGreed](free-apis.md) — API key gerektirmeyen ücretsiz veri kaynakları entegre edildi
-- [LLM Resiliency](llm-resiliency.md) — Gemini→Groq→OpenAI zinciri; tümü başarısız olsa QUANT/EDGE kural tabanlı çalışır; asla çökmez
-- [Gemini API Quirks](gemini-quirks.md) — google-genai paketi zorunlu (google-generativeai deprecated); gemini-2.0-flash; free tier günlük kota dolabilir
-- [Intent Routing](intent-routing.md) — rule_based_intent() 11/11 doğru; QUANT/EDGE hiç LLM gerektirmez; "email" kelimesi MARKETING'e eklendi
+- [LLM Resiliency](llm-resiliency.md) — Gemini→Groq→OpenAI zinciri; QUANT/EDGE LLM olmadan tam çalışır
+- [Gemini API Quirks](gemini-quirks.md) — google-genai paketi zorunlu; gemini-2.0-flash; free tier günlük kota dolabilir
+- [Intent Routing](intent-routing.md) — rule_based_intent() 11/11 doğru; QUANT/EDGE hiç LLM gerektirmez
+- [QUANT Signal Engine](quant-signal-engine.md) — RSI<25+F&G<20=GÜÇLÜ ALIM; eski NÖTR %50 hatası düzeltildi; 4H+günlük MTF
+- [Conversation Context](conversation-context.md) — _user_context per-user dict; followup detection; "ne yapmalıyım?" → direkt karar

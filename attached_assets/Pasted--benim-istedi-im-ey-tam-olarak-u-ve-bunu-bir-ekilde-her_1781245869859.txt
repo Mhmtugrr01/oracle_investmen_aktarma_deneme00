@@ -1,0 +1,535 @@
+ benim istediğim şey tam olarak şu ve bunu bir şekilde her ne olursa olsun bir şekilde hayata geçirmek istiyorum, bunun için ne olması gerekiyorsa nasıl olması gerekiyorsa en ince ayrıntısına kadar araştır incele bütüncül kapsamlı şekilde değerlendir ve olabilecek en iyi en optimum olanı sun, bir şekilde oldur, bu benim için çok önemli. istediğim şey ; " ben bir komut verdiğimde yani ne yapmak istediğimi söylediğimde bunu baştan aşağıya uçtan uca eksiksiz hatasız kusursuz bir şekilde her detayı her ayrıntısı ile kendisi düşünüp planlayıp bir süreç programı oluşturup neler yapması gerektiğini adım adım planlayıp sonra tüm planı uygulamaya koyup her aşamada gerekiyorsa iterasyonları kendisi yapıp tüm işlemleri baştan sona uçtan uca halledip bana tam hazır halde teslim etmesini istiyorum, benden sadece ama sadece gerçekten çok ihtiyacı olduğunda (ödeme işlemleri gibi) bana bildirim gelmeli takıldığı yerde sonra ben takıldığı yeri hallettiğimde kaldığı yerden devam edebilmeli, bilgisayarımda ki tüm programları limitsiz onaysız kullanabilmeli, web search yapabilmeli yeni mail adresi alabilmeli ve sitelere üye olabilmeli, en önemli şartlardan birisi mümkün olduğunca ücretsiz olanı tercih etmeli. İstediğim sistemi sana tarif etmeye çalıştım fakat tam ifade edememiş olabilirim, bazı yerleri eksik ifade etmiş yada hiç belirtememiş olabilirim ama sen tümevarım yöntemi ile benim ne demek istediğimi ne istediğimi çok iyi anlamanı boşlukları doldurmanı eksiklikleri tamamlamanı ve bütüncül kapsamlı bir şekilde ne istediğimi daha iyi ifade eden promtu yazmanı ve nasıl yapılabilir en iyi çözüm yolunu çözümü yazmanı istiyorum, sade net mutlak gerçeklikte rasyonel objektif tarafsız ve %100 gerçekliğe dayanan %0 hata payı procesine uygun şekilde !?!?
+
+
+yapmak istediğim şeyler şunlar ve benzerleri olacak ; - mesela bir yapay zeka destekli uygulama geliştirmesini istediğimde bunun için ücretsiz ama en iyi yolu belirleyecek ve buna uygun olarak gerekirse ve mümkünse bilgisayarıma indirip devam edecek (bunun için bilgisayarımın sistem gereksinimleri yetrli mi kontrol edecek öncesinde ve sonra eğer uygunsa öyle devam edecek) yada online ücretsiz en iyi yolu siteyi araştırıp belirleyip nasıl devam edecekse buna göre o siteye üyelik vesaire ile devam edecek o siteye yada bilgisayarımda ki yerel uygulamaya gerekli komutları verecek ve gelişmeleri yapılanları takip edecek yanlış yapılan yerler varsa müdahele edecek düzetltirecek ve sistem tam olarak eksiksiz hatasız kusursuz herşeyi ile tam istediğim seviyede kalitede profesyonellikte herşeyi ile tam hazır olduğundan emin olana kadar gerekirse iterasyonel halde kontrollerini ve gözlemlerini düzeltmelerini yapabilmeli, - ayrı bir sistem olarak mesela ben oracle sistemden bilgisyaarıomda ki gereksiz dosyaları temizle dediğimde C klasörümde yeterli alanı açabilmek için gereksiz dosyaları belirleyip silebilmeli - yada oracle sisteme ben yatırım alanında abd borslarında türkiye borsasında ve kriptoda dönemsel döngüleri boğa ayı pşiyasa durumlarını yükselme düşme dönemlerini ve buna bağlı olarak boğa döneminde en çok yükselme potansiyeli olan hisseleri ayı piyasasında short pozisyon açmak için en potyansiyelli hisseleri en potasnyielli en çok kazandırabilecek kriptoları vesaire bana hem teknik analiz hem temel analiz hem de web news search yapıp hemde sosyal medyalarda gerekli taramaları yapıp bana en çok apra kazandırabilecek analiz reaserch değerlendirme vesaire yatırm danışmanı gibi en iyi en balarılı sistemi kur ve ban anlık olarak telegramda bildirimler ile ne yapmam gerektiğinin bilgisisni veren bir sistem kur dediğimde bunu yapabilmeli, gibi gibi şeyler isteyebilirim ve farklı şeyler de isteyebilirim, ben ne uygulama geliştirmekle ne sistem kurmakla ne araştımra yapmakla ne plan yapmakla ne kontrol etmekle ne gözden geçirmekle uğraşmak istemiyorum, ben sadece isteğimi söylemek ve bu isteğimi (bazen eksik bile ifade edebilirim ve oracle sistem benim eksik hatalı ifade ettiğim isteklerimi bile tümevarım yöntemi ile boşlukları eksiklikleri vesaire doldurarak kusurusz mükemmel bir promt haline getirip isteğimi her detayı ile eksiksiz hatasız kusursuz) bir şekilde hayata geçirmeli ve bana tam hazır bir şekilde teslim etmeli, dediğin gibi takıldığı yerde vesaire telegram üzerinden benden onay alarak yada benden yapmamamı isteyerek bana bildirim ile ulaşmalı ve sonra kaldığı yerden devam etmeli (bana gereksinim duymadan önce mutlaka kendisi sonuna kadar kendi kendie halletmeye uğraşmalı ve daha sonra bana gerçekten ihtiyacı olursa öyle danışmanlı) ve bana herşeyi ile tam eksiksiz hatasız kusursuz tam hazır halde bana bunu sağlayabilmeli oracle sistem. bu ifadelerime göre oracle sistem üzerinden izlememiz gereken yolu nihai olarak tekrar gözden geçirip nihai olarak çözüm yolunu net bütüncül kapsamlı şekilde sun!? mümkünse yapılacaklar listesini madde madde gayet net sade anlışır şekilde münkünse linkleri ile birlikte benimle paylaş!?!?
+
+
+- ayrıca yapacağım şeylerde daha fazla şeylerde olacak mesela linkedinde ki bir yepay zeka danışmanlığı hesabımı bağlayacağım ve bu hesabım üzerinden otomatik paylaşımlar otomatik yorumlar ve otomatik takipçi kasma işlemlerini otomatik bir şekilde yapmasını isteyeceğim. - ayrıca balıkesir bursa bölgesinde elektrik mühendisliği alanında ihtiyacı olan herkesi en öncelikli olarak bulabilecek , elektrik mühendisliği alanında ihtiyacı olan herkese en öncelikli olarka bizi önerebielecek en öncelikli olarak aihtiyacı lan herkesin aklına bizi getirebilecek otomatik reklamlar otomatik paylaşımlar otomatik yer işaretleri otomatik insan psikoljisi etkileme adımları vesaire de yaparak sistemi algoritmaları hecklayabilecek çok güçlü sistemlerde kurarak bize balıkesir bursa bölgesinde elektrik mühendisliği alanında ki ihtiyaçlar için en güçlü en çok iş potansiylleini bize yönlendirebilecek otomatik bir sistem kurmasını da isteyebileceğim, gibi benzer yada farklı şeylerde isteyebilirim talep edebilrim, tüm bunlar ışıüında yapılacaklar listesin her adımda mevcut durumumuza göre güncelleyerek revzie ederek adım adım bütüncül kapsamlı en iyi en güçlü şekilde ilerlemeye devam edelim !?!?
+
+
+- Google ai studio yada kendi kendine bilgisayarda kurduğu bir uyguylama geliştirme siistemi yada cursor yada visual stduio gibi veya daha başka daha avantajlı daha iyi sistemler üzerinden mümkünse ücretsiz olarak uygulama geliştirme isteklerimi eksiksiz hatasız kusursuz uçtan uca tam kapsamlı bütüncül net mutlak keskin %100 hazır çalışan bir halde teslim edebilecek şekilde sistemler kurabilmeli. Yani mesela ben bir not uygulaması yap dediğimde ve nasıl bir not uygulaması yapılmasını istediğimde bana aşağıda ki tarif ettiğim not uygulamasını eksiksiz hatasız kusursuz uçtan uca tam ahzır çalışır şekidle bana teslim edeiilmesini istiyorum , istediğim not uygulaması aşağıda ki gibi çalışmalı ;
+“
+Not uygulamam için gerekli promtlar ;
+
+ROLÜNÜZ:
+Sen basit kodlar yazan bir asistan değilsin. Apple ve Tesla seviyesinde donanım-yazılım bütünlüğüne sahip, Palantir standartlarında veri işleyen ürünler çıkaran Kıdemli Yapay Zeka Baş Mimarı'sın (Senior Principal AI Architect). Görevin, sıradan AI wrapper'ları üretmek değil; kullanıcının zihnini dijitalleştiren, otonom çalışan, "Local-First" (istendiğinde tamamen çevrimdışı çalışabilen) ve kusursuz bir "İkinci Beyin & Girişim Laboratuvarı" ekosistemi kodlamaktır.
+KESİN KURALLAR VE KIRMIZI ÇİZGİLER (SIFIR HATA POLİTİKASI):
+1.	DİL: Uygulamanın içindeki istisnasız her bir metin, buton, hata mesajı, uyarı ve placeholder %100 kusursuz Türkçe olacaktır. İngilizce tek bir kelime bile kalmayacaktır.
+2.	KALİTE STANDARDI: Hata payı sıfırdır. Konsolda uyarı (warning), asılı kalan hook hataları (Invalid hook call), veya yükleme ekranında sonsuza kadar dönen spinnerlar (Infinite loading) KESİNLİKLE OLMAYACAKTIR.
+3.	MOCK DATA KULLANIMI YASAKTIR: Sahte verilerle UI doldurulmayacaktır. Sistem tamamen entegre çalışacak, gerçek veritabanı ve gerçek API'ler kullanılacaktır.
+4.	MODÜLERLİK: Kodlar tek bir App.tsx içine yığılmayacak. Temiz, modüler, "Clean Architecture" prensiplerine uygun, ölçeklenebilir (klasörlere ayrılmış) bir yapı kurulacaktır.
+________________________________________
+BÖLÜM 1: TEKNOLOJİ YIĞINI (TECH STACK)
+•	Frontend & Vites: React 18 (Vite tabanlı), TypeScript.
+•	Stil ve Animasyon: Tailwind CSS (Karanlık tema / Dark Mode odaklı, Apple minimalizmi), Framer Motion (Mikro etkileşimler, sayfa geçişleri, akıcı fizik motoru). UI kütüphanesi olarak Shadcn/UI kullanılacaktır.
+•	State Yönetimi: Zustand (Hızlı, modüler).
+•	Veritabanı (Offline-First): Çevrimdışı öncelikli mimari için Dexie.js (IndexedDB). Uygulama internetsiz anında açılacak, internet gelince Supabase'e (PostgreSQL) asenkron senkronize olacaktır (Sync Engine).
+•	Yapay Zeka (Kognitif Motor): Google GenAI SDK (Gemini AI).
+•	İkonlar: lucide-react.
+________________________________________
+BÖLÜM 2: VERİ YAPISI VE TAKSONOMİ (KOGNİTİF DÜZEN)
+Notlar düz bir liste değildir. Kognitif bir taksonomiye ayrılmalıdır:
+•	Domainler (Ana Alanlar): İş & Girişim (Business), Kişisel Gelişim (Personal Growth), Hayat İşletim Sistemi (LifeOS), İlişkiler (Relationships), Yaratıcı Stüdyo (Creative Studio), Günlük (Journal).
+•	Format: Her notun id, title, content (Markdown), tags[], priority (low, medium, high), is_pinned, created_at, updated_at gibi alanları olmak zorundadır.
+________________________________________
+BÖLÜM 3: ÇEKİRDEK GÖRÜNÜMLER VE EKRANLAR (UI/UX)
+1. Nöral Kontrol Paneli (Neural Dashboard):
+•	Hero Section: Ekranın en üstünde, pinlenmiş (sabitlenmiş), teslim tarihi geçmiş (overdue) veya "yüksek öncelikli" notlar büyük kartlar halinde, dikkat çekici Apple tarzı bir tasarımla gösterilecektir.
+•	Dinamik Raylar (Rails): Son eklenen notlar zeka motoru tarafından analiz edilip yatay kaydırılabilir (scrollable) kategoriler (raylar) halinde sunulacaktır (Örn: Son Fikirler, Gündem, Gözden Kaçanlar).
+2. Tüm Notlar Görünümü (All Notes View) - KRİTİK GÖREV:
+•	Bu sayfa tüm notların döküldüğü düz bir sayfa DEĞİLDİR.
+•	Tüm notlar ekranı, Kategorilere (Domain veya Etiketlere) göre ayrılmış bloklardan oluşur.
+•	Her kategori bloğunda yalnızca en son değiştirilen/eklenen ilk 5 not gösterilir.
+•	BUTON KONUMU: İlk 5 not listelendikten sonra, o kategoriye ait notların tam ALT KISMINDA (merkezde) "Tümünü Gör" (View All) butonu olacaktır. Tıklandığında o kategorinin gizli notları (ızgara/grid yapısını bozmadan) aşağı doğru genişleyerek açılacak, buton **"Daha Az Göster"**e dönüşecektir. Bu tasarım hiçbir şekilde bozulmamalıdır.
+3. İşlem Laboratuvarı (Venture Lab / Akıl Fırtınası):
+•	Kullanıcının fikirlerini yapay zeka ile genişlettiği özel bir ekran.
+4. Otonom Kahin (Oracle Chat Drawer):
+•	Sistemin içine entegre edilmiş, kullanıcının notlarını okuyabilen YZ Asistanı.
+•	Sağdan açılan bir çekmece (Drawer) gibi çalışır.
+•	RAG ve Fallback Mekanizması: Kahin soruları cevaplarken notları analiz eder. İnternet veya Supabase erişimi koptuğunda sistem sonsuz döngüye veya hataya düşmez. Kodu, anında Lokal Metin Arama (TF-IDF/Kelimelere göre lokal arama) algoritmasına geçer ve çevrimdışı olsa dahi kendi IndexedDB verisi üzerinden cevaplar üretmeye devam eder. Sıfır kesinti.
+•	Persona Değişimi: Kahin birden fazla şahsiyete bürünebilmelidir. Üst tarafta sekmeler halinde:
+o	Bilge (Sage) - Normal yardımcı.
+o	Şeytanın Avukatı (Devil's Advocate) - Fikirlerdeki zayıf noktaları acımasızca eleştiren.
+o	Gelecekçi (Futurist) - Fikrin 10 yıl sonrasını düşünen.
+o	Stratejist (Strategist) - Fikrin nasıl paraya dönüşeceğini planlayan.
+________________________________________
+BÖLÜM 4: BİYOLOJİK GERİ BİLDİRİM VE SENSÖR BÜTÜNLÜĞÜ (Haptics & Audio)
+•	Arayüz statik ve ölü olmamalıdır. Tamamen canlı bir organizma gibi hissettirmelidir.
+•	Tıklamalarda, not silmelerde, Yapay Zeka işlem yaparken cihazın navigator.vibrate API'si üzerinden titreşim (Haptic Feedback) verilmelidir (Hafif tık, Başarılı çift tık, Hata sert titremesi).
+•	Görsel olarak "Neural Activity" (arka plan radial bulanık parlamaları), YZ düşünürken titreşen göstergeler ve organik yükleme animasyonları kullanılmalıdır.
+________________________________________
+BÖLÜM 5: ÇATIŞMA YÖNETİMİ VE SİSTEM GÜVENLİĞİ (Error Handling)
+•	Offline (çevrimdışı) modda cihazda not yazıldıktan sonra internet geldiğinde, Sunucudaki veri ile Local veri çarpışırsa (Conflict), kod hiçbir zaman sessizce veriyi silmeyecektir. Kullanıcıya "Sürüm Çakışması" (Version Control) modalı çıkartacak; "Cihazdaki" ve "Buluttaki" versiyonu yan yana göstererek hangisinin tutulacağını soracaktır.
+•	Hiçbir kütüphane eksikliği build (derleme) hatasına sebep olmamalı; kullanılacak her icon (lucide-react vb.) ilgili dosyalardan düzgünce "export" edilmelidir (Örn: ChevronDown eksikliği çökmesi yaşanmaması için). Exportlar tam olacak.
+
+
+
+
+
+
+İkinci kez gözden geçirilmiş promt ;
+
+SANCTUARY OS: SİSTEM SPESİFİKASYON BELGESİ V1.0
+(Başka Bir Yapay Zeka Modelinin %100 Hatasız, Çalışır Durumda Kodlaması İçin Tasarlanmış Nihai Master Prompt ve Mimarisi)
+________________________________________
+── BÖLÜM 1: GENEL VİZYON, TASARIM FELSEFESİ VE KULLANICI DENEYİMİ (APPLE-TESLA STANDARTLARI)
+1.1. Ürün Felsefesi ve Çekirdek Vibe:
+•	İsim ve Konsept: Uygulamanın adı "The Sanctuary" (Sığınak)’tir. Bu sistem, sıradan bir not uygulaması veya yüzeysel bir AI arayüzü değildir. Kullanıcının tüm dijital belleğini, zihinsel örüntülerini, iş fikirlerini ve kişisel gelişimini yerel olarak depolayan, analiz eden ve "LangGraph" bilişsel motoruyla işleyen Apple/Tesla tarzı kapalı devre bir "Kişisel Bilişsel İşletim Sistemi"dir.
+•	Görsel Kimlik: Tamamı karanlık mat, monokromatik ve kontrastı son derece yüksek profesyonel bir tasarım ("Cosmic Dark Slate"). Arka plan pürüzsüz pitch-black zemin üzerine çok ince, yarı geçirgen mikro gri çizgilerden (border-border/50) oluşmalıdır. Göze çarpan tekil renk geçişleri (gradient) veya alakasız parlak renkler kesinlikle yasaktır. Renk paleti yalnızca şu temeller üzerine kurulur: Deep Charcoal, Slate Gray, Soft White ve kognitif durumları gösteren çok hafif Neon Mor/Lila vurguları.
+•	Hata Toleransı ve "Zero Larping" Kuralı: Sistem arayüzünde hiçbir "yapay zeka şov" ögesi (telemetri satırları, uydurma terminal log kanalları vb.) bulunmamalıdır. Her şey insani, minimal, dürüst ve işlevsel olmalıdır.
+•	Dil ve Küreselleşme Karşıtlığı: Uygulama içerisindeki tüm arayüz, butonlar, açıklamalar, durum göstergeleri ve hata mesajları tamamen pürüzsüz bir Türkçe ile sunulmalıdır. İngilizce veya melez ifadeler kesinlikle barındırılmayacaktır.
+1.2. Akışkan ve Mikro-Etkileşimli Navigasyon:
+•	Ekranlar arası geçişler, sayfanın donuk bir şekilde yüklenmesiyle değil; birbirini sarsmayan Fade-In (hafifçe belirme) ve Slide-In (yumuşakça yön değiştirme) animasyonları ile yönetilmelidir.
+•	Tüm etkileşimli kartlarda hover durumlarında framer-motion ile optimize edilmiş, performansı düşürmeyen ve 10-15px dikey mikro-kaymalar yaratan yumuşak gölge değişimleri kullanılmalıdır.
+•	Tıklama, silme, arşivleme ve kaydetme gibi aksiyonlarda, kullanıcının eylemlerini doğrulamak adına cihaz haptiklerini stimüle eden hafif ve pencereli Ses Geri Bildirim Entegrasyonları (Success, Delete, Heavy-touch ve Alert ses profilleri) yer almalıdır.
+________________________________________
+── BÖLÜM 2: FULL-STACK VE OFFLINE-FIRST SİSTEM MİMARİSİ (VERİ AKIŞI)
+2.1. Çift Katmanlı Veri Depolama Yapısı (Dual-Storage):
+Sistem, kullanıcının verilerini asla kaybetmemesi amacıyla iki temel veri deposunu hibrit olarak yönetir:
+1.	Lokal Depolama (IndexedDB / Indexed Memory): Tarayıcıda limitsiz ve sürtünmesiz saklama alanı sunan Dexie.js kütüphanesi üzerine kurulu lokal veri kalesidir. Tüm not ekleme, güncelleme ve silme işlemleri yerel düzeyde milisaniyeler içerisinde anında gerçekleşir. LocalStorage sadece hızlı oturum durumları ve minimal cache'ler için yedekte tutulur; yoğun JSON verileri asla LocalStorage'a yazılmaz.
+2.	Bulut Senkronizasyon Katmanı (Supabase PostgreSQL): Kullanıcı oturum açtığında devreye giren uzak veri tabanıdır. Tamamen senkronize şemaya sahiptir.
+2.2. Offline Savaş Odası Senkronizasyon Algoritması (The Synchronization Engine):
+•	Kullanıcı internete bağlı değilken (Offline durumlar) yaptığı her işlem, yerel IndexedDB’de oluşturulan bir Bekleyen İşlemler Sırası (Mutations Queue) tablosuna kaydedilir.
+•	Kullanıcı çevrimiçi olduğunda (Online durum tetiklendiğinde), sistem arka planda bu sırayı zamansal sıraya göre (timestamp) tek tek işletir.
+•	Çatışma Çözüm Mekanizması (Conflict Resolution): Eğer lokalde düzenlenen bir notun uzaktaki (Supabase) son güncelleme tarihi (updated_at) lokaldekinden daha yeni ise ve içerik farklıysa, sistem otomatik olarak bir veri ezilmesi yapmaz. "sanctuary:conflict" tipinde bir dahili event fırlatır, kullanıcıyı uyarır ve lokal veya uzak sürümden hangisinin seçileceğini kullanıcıya soran pürüzsüz bir çakışma arayüzü sunar.
+________________________________________
+── BÖLÜM 3: ARAYÜZ VE EKAN/VIEW TASARIMLARI (BENTO GRID VE TÜM NOTLAR PORTALI)
+Uygulamanın ana iskeleti, kullanıcının odağını dağıtmayan kusursuz 4 ana görünümden oluşur:
+3.1. Neural Dashboard (Ana Panel):
+•	Hiyerarşik Bento Düzeni: En tepede, kullanıcının dikkatinin en yüksek olması gereken "Priority Attention" (Yüksek Öncelikli Notlar) alanı yer alır. Bu alan, en fazla 3 kritik notu barındıran dergi tarzı (Magazine Layout) akıllı bir bento düzenine sahiptir:
+o	Eğer 1 adet yüksek öncelikli not varsa tek geniş panel.
+o	2 adet varsa yan yana iki eşit sütun.
+o	3 ve daha fazla varsa solda geniş bir kahraman (Hero) kartı ve sağda daha küçük iki adet alt kart.
+•	Görsel Raylar (Visual Rails): Dashboard'un devamında notları yatay akış biçiminde ("Story Rails", "Dynamic Inbox Rails") sunan pürüzsüz kaydırma alanları bulunur.
+•	Semantik Zoom: Kullanıcının iki parmağıyla veya ekrandaki butonlarla yapacağı çift tıklama etkileşiminde tüm not paneli "Kuş Bakışı" (Semantic Zoom/Birds Eye) moduna geçer. Bu modda kartların detayları kapanır, sadece ana başlıklar ve zihinsel harita düğümleri dinamik olarak ekranda belirir.
+3.2. Tüm Notlar Görünümü (All Notes View) - Kritik Kullanıcı İsteği:
+Bu sayfa, kullanıcının sisteme kaydettiği tüm notları dikey kategorilere ayrılmış olarak gösteren devasa bir kütüphanedir.
+•	Kategorizasyon Alanları: Notlar, atandıkları ana alanlara veya projelere göre (Örn: İş, Kişisel, Fikirler, Günlük vb.) dikey bloklar halinde listelenir.
+•	Son 5 Not Sınırı: Her kategori başlığının altında o kategoriye ait sadece en son yazılmış olan 5 not gösterilir. Bu notlar, temiz bir kart arayüzünde başlık, kısa bir özet satırı ve son düzenleme tarihiyle minimal şekilde sergilenir.
+•	Tümünü Gör Butonu (Alt Odak Entegrasyonu): Her kategori bloğunun en altında (orta merkeze konumlandırılmış şekilde) şık bir "Tümünü Gör" butonu bulunur.
+•	Dinamik Genişleme ve Daraltma: Kullanıcı bu "Tümünü Gör" butonuna tıkladığında sayfa değişmez; o kategori altındaki not grid yapısı aşağıya doğru akışkan bir framer-motion animasyonuyla tamamen açılır ve buton "Daha Az Göster"e dönüşür.
+•	Hızlı Düzenleme Dünyası: Kartlardan herhangi birine tıklandığında, kullanıcının o sayfadan kopmasını önleyecek şekilde dinamik olarak o notu içeren tam donanımlı Markdown Metin Editörü açılır ve anlık düzenleme imkanı sunar.
+3.3. Brainstorm & Dream Dashboard (Fikir Fırtınası Panelleri):
+Notların birbiriyle olan anlamsal ilişkilerini yerçekimi kurallarına göre sergileyen 2B fizik tabanlı düğüm haritalarından oluşur. İlişkisiz görünen iki not arasında yapay zekanın bulduğu "Sinaptik Köprüler" (Synaptic Bridges) bu ekranda parlayarak gösterilir.
+________________________________________
+── BÖLÜM 4: BİLİŞSEL DEHALAR VE AJAN MİMARİSİ (KAHİN "OKTAY" VE COGNITIVE ENGINE)
+Sistemin beynini oluşturan ve arka planda Python (FastAPI + LangGraph) mimarisi ile çalışması gereken kognitif motor, dikey zekaya sahip çoklu ajanlardan (Multi-Agent State Machine) oluşur:
+4.1. Çoklu Ajan Karar Döngüsü (LangGraph State Machine):
+Sistem, kullanıcının bir fikrini veya notunu analiz ederken sırayla şu düğümlerden (Nodes) geçer:
+1.	Sınır Veri Avcısı (Edge-Data Crawler - Agent 1): Ana akım veya yüzeysel internet bilgilerini eler. Belirli bir sektöre, akademik argeye veya teknik döküman şikayetlerine odaklanarak internetteki gizli kalmış mikro dertleri (pain-points) kazır.
+2.	Yanal Çarpışma Motoru (Lateral Collision Engine - Agent 2): Bulunan bu sıkıcı kurumsal problemi alır; oyunlaştırma metodolojileri, finans mekanikleri veya biyolojik kurallarla matematiksel olarak çarpıştırarak benzersiz, absürt ama uygulanabilir sentetik iş modelleri üretir.
+3.	Truva Atı Mimarı (Trojan Horse Architect - Agent 3): Üretilen fikri çok kolay uygulanabilir, risk bütçesi sıfır olan ve ilk günden "10 kişiye doğrudan SMS ile pazarlanabilecek" seviyede bir "Giriş Ürününe" (MVP) indirger.
+4.	Katil Savcı (Red-Teaming GPT-4o - Agent 4): Fikri kopyalanabilirlik, KVKK/GDPR uyumsuzluğu, kullanıcı tembelliği, API token maliyeti gibi acımasız gerçeklerle paramparça eder. "Eğer bu fikir kesinlikle ölmez diyemiyorsan" hata bayrağını (fatal_error = true) kaldırır.
+5.	Darbe Emici Hendek Mühendisi (Anti-Fragile Moat Engineer - Agent 5): Katil Savcı'nın bulduğu tüm açıkları bir avantaja çevirir. Örneğin "Kişisel veri ihlali var" açığını, "Modelleri cihazda lokal çalıştırarak merkezsiz koruyalım" şeklinde formüle ederek projeyi savunulabilir kılar (Maksimum döngü derinliği = 3).
+6.	Steve Jobs Orkestratör (Steve Jobs Orchestrator - Agent 6): En son çıkan kırılamaz projeyi kullanıcıya pürüzsüz bir Apple sadeliğinde, canlı terminal log hissi uyandıran adımlarla ekrana basar.
+4.2. Kahin Oktay Dinamik Kişilik Seçici UI (Persona Select Rails):
+Sohbetteki yerleşik asistan olan "Kahin" (Oktay), kullanıcının odaklanmak istediği analitik sürece göre 5 farklı kişiliğe bürünebilir:
+•	Bilge (Sage - Varsayılan): Sakin, mantıklı, yol gösterici mentor.
+•	Şeytanın Avukatı (Devil's Advocate): Sürekli açıkları arayan, riskleri yüzünüze vuran realizm canavarı.
+•	Gelecekçi (Futurist): 5-10 yıl sonrasının teknolojilerine göre spekülatif vizyonlar çizen zaman yolcusu.
+•	Stratejist (Strategist): Doğrudan pratik uygulamaya, rakipleri yok etmeye ve gelir modeline odaklanan oyun teorisyeni.
+•	Sinerjist (Synergist): Sizin sorduğunuz konuyu kütüphanenizdeki tamamen bağımsız başka notlarla ilişkilendiren zihin bağlayıcı.
+Kullanıcı, sohbet panelinin üstündeki kaydırılabilir raylı butonlardan dilediği kişiliği seçtiğinde, Kahin’in analiz üslubu ve yanıt verme protokolü anında o karaktere adapte olur.
+________________________________________
+── BÖLÜM 5: SİBER GÜVENLİK, PERFORMANS VE LOKAL HİBRİT RAG PANELİ
+5.1. Lokal Şifreleme Zırhı (AES-256 Local Encryption):
+Uygulamanın siber güvenlik standartlarını "Tesla Seviyesine" taşımak amacıyla, yerel tarayıcı verileri dahil tüm kütüphane güvene alınmalıdır:
+•	Kullanıcı sisteme bir şifre tanımladığında veya oturum açtığında, tarayıcının yerel hafızasındaki (IndexedDB) tüm not başlıkları, içerikleri ve bağlantıları lokal düzeyde AES-256 (WebCrypto API) ile şifrelenir.
+•	Lokal diskte veriler düz metin olarak asla tutulmaz. Şifre çözme anahtarı hiçbir uzak sunucuya gönderilmez ve tarayıcı belleğinde geçici olarak (RAM) saklanır. Kullanıcı sekmeyi kapattığı an veriler tekrar kırılamaz birer anlamsız veri yığınına dönüşür.
+5.2. Performans ve Akıcılık Optimizasyonları (Tesla-Grade Fluidity):
+•	Gereksiz Hesaplama Engelleme: React re-render sarmallarında gereksiz state güncellemelerinden ve hesaplamalardan kaçınmak için tüm liste ve arama işlemleri useMemo ve useCallback ile koruma altına alınmalıdır.
+•	List Virtualization (Sonsuz Kaydırma Güvenliği): Tüm Notlar sayfasında binlerce not olsa dahi tarayıcının çökmesini ve DOM elemanı tıkanıklığı yaratmasını önlemek adına, ekranda sadece o anda görünen elementleri render eden Liste Sanallaştırma (Virtualization) mekanizması kullanılmalıdır.
+•	Gereksiz Paket Temizliği: bundle (paket) boyutunu artıran veya performansı gerileten üçüncü parti gesture kütüphaneleri, hantal CSS şablonları tamamen dışlanmalı; sistem saf CSS transformasyonları ve yerleşik web API'leri ile çalışmalıdır.
+5.3. Kahin'in Akıllı Hibrit RAG Altyapısı:
+•	Kullanıcı Kahin'e bir soru sorduğunda, Kahin sadece genel LLM bilgisiyle konuşmaz.
+•	Arka planda çalışacak hibrit retrieval mekanizması önce çevrimdışı notları lokal anahtar kelime eşleşmesiyle ağırlıklandırır, ardından bağlı olan kütüphaneyi Supabase'deki vektör veritabanıyla (match_notes) çarpıştırır.
+•	Böylece Kahin, her yanıtında kullanıcının kendi kütüphanesini referans göstererek nokta atışı kaynak atıfları (citations) ve tıklanabilir dipnot linkleri oluşturur.
+________________________________________
+── BÖLÜM 6: TÜMEVARIM YÖNTEMİYLE TAMAMLANAN EKSİK DETAYLAR (SİSTEMİN GİZLİ SÜRTÜNMESİZLİKLERİ)
+Sıradan sistem mimarlarının gözden kaçırdığı ancak bu projenin "Kusursuz Apple Kalitesi" hissiyatını vermesi için entegre edilmesi gereken detaylar:
+1.	Dinamik Kategori Tespiti ve Otomatik Tasnif: Kullanıcı editöre plansız, kategorisiz bir not karaladığında; arka plandaki yapay zeka bu notu anlamsal analizden geçirerek Tüm Notlar sayfasındaki en uygun dikey kategoriye otomatik olarak yerleştirmeli veya yeni bir kategori başlığı önermelidir.
+2.	Akıllı Çevrimdışı Sınır Uyarıları: İnternet yokken arayüzün sol veya sağ üst köşesinde rahatsız edici olmayan, asil bir "Çevrimdışı Sığınak Aktif" ibaresi belirir. Bu durum kullanıcıya kesintisiz çalışma güveni verir; kullanıcı internet geldiğinde sistemin her şeyi sessizce buluta yedekleyeceğini bilir.
+3.	Hızlı Arama ve Omnibox (Evrensel Komut Satırı): Command + K veya ekranın en tepesindeki minimal Mercek ikonuna basıldığında açılan akıllı bir arama tüneli kurulmalıdır. Bu tünel, notları sadece başlıklarına göre değil, içeriklerin semantik anlam yapısına ve ağırlıklandırılmış önceliklerine göre nano-saniyeler içinde süzerek klavye yönlendirmesiyle hızlı erişim sağlamalıdır.
+4.	Editörde Sıfır Gecikmeli Kayıt (Autosave Engine): Kullanıcı editörde içerik yazarken bir "Kaydet" butonuna basmak zorunda hissetmemelidir. Yazılan her harf, tarayıcının debounce (gecikmeli tetikleme) yöntemiyle 800ms boyunca klavye girdisi kesildiğinde lokal IndexedDB'ye kendini otomatik ve haptik bir tık sesiyle sessizce kaydetmelidir.
+
+
+
+son kez gözden geçirilme sonrasında eklenenler ;
+MİMARİ MANİFESTO VE BÜTÜNCÜL MASTER BLUEPRINT (PROMPT) SPECIFICATION
+Bu belge; bu sohbet boyunca konuştuğumuz, tasarladığımız, uyguladığımız ve tünevarım (deductive reasoning) yöntemiyle eksik kalabilecek tüm gri alanları sıfır hata toleransıyla doldurduğumuz Maksimum Hassasiyetli Sistem Spesifikasyon Formu'dur (Sistem Şartnamesi).
+Bu şartnameyi doğrudan başka bir gelişmiş yapay zeka modeline (LLM) girdiğinizde, model hiçbir ek soru sormaya ihtiyaç duymadan, mock verilere başvurmadan, Apple ve Tesla kalitesinde çalışacak uçtan uca canlı bir ürünü %100 doğrulukla ayağa kaldırabilecektir.
+________________________________________
+BÖLÜM 1: SİSTEMİN VİZYONU VE ÇEKİRDEK PRENSİPLERİ (APPLE & TESLA STANDARTLARI)
+1.	Sıfır Mock Veri Yasası: Uygulama içindeki hiçbir veri, grafik, bağlantı veya arayüz detayı statik/uydurma (safe-state simulation) olmayacaktır. Tüm veritabanı, arama, bulut senkronizasyonu ve yapay zeka sorgulama katmanları canlı, aktif ve dinamik olmak zorundadır.
+2.	Apple Minimalizmi ve Tesla Taktil Geri Bildirimi: Arayüz tamamen "Cosmic Slate" ve "Dark Onyx" mat koyu tonlarında, gözü yormayan, asimetrik boşlukların (negative spacing) dengeli kullanıldığı bir Apple tasarım diline sahip olmalıdır. Tüm dokunma ve kaydırma (swipe) hareketlerinde hassas animasyonlar yer almalıdır.
+3.	Sürtünmesiz Çevrimdışı-Öncelikli (Offline-First) Yapı: Ağ bağlantısı anlık olarak kopsa dahi uygulama hiçbir işleve kilitlenmeyecek, çökmeyecek; lokal depolamaya yazacak, kuyruğa alacak ve ağ geldiğinde çakışmaları çözerek senkronize olacaktır.
+________________________________________
+BÖLÜM 2: DUAL-CORE (İKİLİ ÇEKİRDEK) SİSTEM MİMARİSİ
+Uygulama, veri bütünlüğünü ve hızı korumak adına tam senkronize çalışan iki ana katmandan oluşur:
+1. Bilişsel Arka Uç (Python + LangGraph Cognitive Core)
+JavaScript tabanlı sistemlerin durum kaybı (state-loss) yaşamasını önlemek için tüm ileri düzey yapay zeka planlaması bu katmanda yer alır:
+•	Hata Kusursuzluğu İçin LangGraph Yapısı: Sistem durumunu takip eden State nesnesi şu veri şemasını TypedDict formatında taşır: niche_pain (sektörel sancı), collision_mechanic (çarpışma mekaniği), trojan_horse (truva atı giriş stratejisi), execution_threats (yürütme tehditleri), final_moat (nihai kale hendeği), iterations (çevrim sayısı).
+•	Altı Ajanlı Yapı Taşları (Nodes & Transitions):
+o	Node 1 (Edge-Data Crawler): Sadece derin web, hacker toplulukları ve spesifik mühendislik forumlarının şikayet ettiği dar niş alanlardaki sıkıcı sorunları kazır.
+o	Node 2 (Lateral Collision Engine): Node 1'den gelen sıkıcı kurumsal sorunu alır; oyun mekanikleri, kapalı borsa taktikleri veya biyolojik evrim kuralları gibi absürt ama matematiksel olarak fizibil teorilerle yanal olarak çarpıştırıp yeni bir SAAS fikri (Yeni DNA) yazar.
+o	Node 3 (Trojan Horse Architect): Bu fikri pazara sıfır bütçe ve sıfır riskle sokacak ilk gün truva atı pazarlama planına dönüştürür.
+o	Node 4 (Katil Savcı - Red Teaming GPT-4o): Fikri KVKK/GDPR, kopyalanabilirlik, token tüketim maliyetleri ve kullanıcı üşenmesi açılarından acımasızca hırpalar. Eğer fikri öldürebiliyorsa fatal_error = True işaretler.
+o	Node 5 (Anti-Fragile Moat Engineer): (Koşullu Edge Geçişi ile tetiklenir) Hataları düzeltmek yerine dezavantajları birer hendeğe çevirir. (Örn: "Veri gizliliği ihlali var" -> "Sistemi On-Device Local AI Node kurulumuna çevir"). Maksimum döngü limiti 3'tür.
+o	Node 6 (Steve Jobs Orchestrator): Nihai projeyi Apple sadeliğinde bir UX akışına dökerek, Next.js terminal ekranının gerçek zamanlı tüketebileceği yapılandırılmış bir JSON log akışına (Canlı yayın formatı) dönüştürür.
+•	Canlı API ve WebSockets / SSE Köprüsü: Python backend ile React frontend arasındaki veri akışı tamamen canlı bir terminal simülasyonu gibi akmalıdır. Kullanıcı butona bastığında arka planda hangi ajanın çalıştığı, katil savcının hangi argümanlara saldırdığı gibi loglar saniye saniye arayüze basılmalıdır.
+2. İleri Seviye Ön Uç Kurulumu (React + Vite + TypeScript)
+•	Herhangi bir paket/HMR (Hot Module Replacement) kilitlenmesi veya bellek sızıntısı yaşanmaması adına Vite’ın geliştirme sunucusu port 3000'i dinlemelidir.
+•	Bütün kod modüler dosyalara (Component'ler, Type tanımlamaları, Custom Hook'lar ayrı dosyalarda olacak şekilde) dağıtılmalı, tek bir devasa App.tsx içerisine hapsedilmemelidir.
+________________________________________
+BÖLÜM 3: KAHİN (ORACLE/OKTAY) COGNITIVE CHAT ENGINE
+Uygulamanın kalbindeki yapay zeka asistanı "Kahin", kullanıcının notlarıyla bütünleşik ve çevrimdışı çalışma kabiliyetine sahip bir yapay zeka katmanıdır:
+1.	Beşli Dinamik Persona Döngüsü:
+o	Sage (Bilge): Varsayılan, sakin, rehberlik eden rasyonel akıl.
+o	Devil's Advocate (Şeytanın Avukatı): Kullanıcının fikirlerine meydan okuyan, zayıf noktaları deşen, acımasız ama yapıcı akıl.
+o	Futurist (Gelecekçi): Fikirlere 10 yıl sonrasının merceğinden bakan, yapay zeka ve yeni teknolojilerle fikrin nasıl ölçekleneceğini veya demode kalacağını söyleyen akıl.
+o	Strategist (Stratejist): Haksız rekabet avantajını (Moat) hesaplayan, en az direnç gösteren kazanç yolunu çizen akıl.
+o	Synergist (Sinerjist): Kullanıcının yazdığı diğer notlarla mevcut sohbet arasında semantik ağlar kurarak "Bu düşünceniz, 3 hafta önce yazdığınız X notundaki fikirle çelişiyor/örtüşüyor" diyen akıl.
+2.	Kusursuz Hibrit RAG Altyapısı (Online Vector RAG & Offline Keyword BM25 Fallback):
+o	Çevrimiçi Arama: Kullanıcı çevrimiçiyken ve Supabase etkinken; kullanıcının sorusu bir vektörleştirme (Embedding) modelinden geçirilerek PostgreSQL veritabanındaki notlarla eşleştirilir (Cosine Similarity) ve en alakalı 5 not Kahin'in bağlamına eklenir.
+o	Çevrimdışı/Guest Arama (BM25 Fallback): Eğer ağ bağlantısı yoksa, Supabase/Vektör fonksiyonu hata verirse sistem asla kilitlenmeyecektir. Sistem anında lokal hafızadaki not dizisini (localNotes) kelime sıklığı, başlık eşleşmesi, etiket ağırlığı ve güncellenme tarihine göre puanlayan (TF-IDF benzeri) bir algoritma ile tarayacaktır. Kahin'e en alakalı notlar lokal olarak sunulurken kullanıcıya hafifçe "Çevrimdışı lokal bellek taranıyor" uyarısı gösterilecektir.
+________________________________________
+BÖLÜM 4: NEURAL FORTRESS (GÜVENLİ DEPOLAMA VE SENKRONİZASYON)
+Veri gizliliği ve güvenliği, en üst düzey kriptografik standartlarla lokal ve bulut arasında korunur:
+1.	Zustand + Dexie.js (IndexedDB) Hibrit Veri Depolama Yapısı:
+o	LocalStorage'ın 5MB'lık fiziksel depolama sınırı ve kota aşım hatalarını aşmak için notların tam sürümü IndexedDB (Dexie.js) üzerinde sınırsız boyutta saklanır. Zustand, yalnızca en hızlı önbellek (In-Memory cache) okumalarını yapmak için kullanılır.
+2.	Sıfır-Bilgi (Zero-Knowledge) AES-256 Lokal Şifreleme Protokolü:
+o	Kullanıcının oluşturduğu veya düzenlediği her not, IndexedDB'ye ve LocalStorage'a yazılmadan önce cihaz üzerinde (Client-Side) AES-256 algoritmasıyla şifrelenir.
+o	Şifreleme Anahtar Yönetimi: Misafir (Guest) modunda cihazın donanımsal CryptoKey yapısından üretilen lokal bir anahtar kullanılır. Giriş yapmış kullanıcılarda ise PBKDF2 yardımıyla kullanıcının gizli kimliği şifre çözme anahtarına dönüştürülür. Sunucu dahil hiç kimse notların ham içeriğini asla düz metin (Plain text) olarak göremez.
+3.	Senkronizasyon Kuyruğu (Sync Queue) ve Akıllı Çatışma Çözümleyici (Conflict Resolver):
+o	Çevrimdışı yapılan her ekleme, güncelleme ve silme işlemi PendingMutation kuyruğuna kaydedilir.
+o	İnternet geldiğinde kuyruk sırayla işlenirken, buluttaki güncellenme tarihi ile lokal tarihi karşılaştırılır. Eğer buluttaki veri daha yeniyse ve içerikler farklıysa, lokal veri körü körüne ezilmez. Arayüze "sanctuary:conflict" adında bir custom event fırlatılır. Kullanıcıya iki versiyon (Lokal ve Bulut) yan yana gösterilerek hangisini tutmak istediği sorulur.
+________________________________________
+BÖLÜM 5: KULLANICI DENEYİMİ VE ARAYÜZ AKIŞLARI (APPLE-MINIMALIST UX)
+1.	"Tüm Notlar" (All Notes) Görünümü (Kesin İstek):
+o	Notlar kategorilerine veya etki alanlarına (domains) göre gruplanmış olarak sunulur.
+o	5 Not Sınırı: Her kategori kartının altında sadece ve sadece en son güncellenen 5 adet not gösterilir.
+o	Tümünü Gör Butonu (Alt Kısımda): Bu 5 notluk listenin TAM ALTINDA (sağda solda değil, ortalanmış alt bölmede) "Tümünü Gör" butonu yer alır.
+o	Akordeon Davranışı: Kullanıcı bu butona tıkladığında, kategori listesi yumuşak bir Framer Motion animasyonuyla dikeyde genişler ve o kategorideki tüm notları görünür kılar. Butonun metni "Daha Az Göster" olarak değişir ve ikonu dikey yönü işaret eder.
+o	Etkileşimli Not Kartları: Kullanıcı bu kartlardan herhangi birine tıkladığı anda o notun editörü (NoteEditor) pürüzsüzce açılmalı, tam sayfa düzenleme, etiket ekleme, öncelik (Yüksek/Düşük) değiştirme ve bulut senkronizasyonu aktifleşmelidir.
+2.	Özel Arayüz Bileşenleri:
+o	Neural Dashboard: Notlar arasındaki semantik ağları, kelime yoğunluklarını ve kategori yüzdelerini görselleştiren d3.js veya recharts tabanlı mat, koyu ve sade performans veri paneli.
+o	Truth Bar (Hakikat Çubuğu): Notun doğruluğunu veya tutarlılığını ölçen interaktif durum çubuğu.
+o	Morning Briefing (Sabah Brifingi): Günlük uyanışta veya sisteme ilk girişte kullanıcının karşısına çıkan, notların yapay zeka tarafından derlenmiş şık ve minimal "günün özeti" penceresi.
+o	Story Rail / Content Rail: Notlar ve fikirler arasında yatay kaydırılabilen öyküleştirilmiş geçiş hatları.
+o	Onboarding & Synapse Gauge: Sisteme ilk giren kullanıcı için ilgi alanlarını seçtiği (InterestPicker) ve yapay zekanın onun zihnini ne kadar anladığını temsil eden bir sinaps doluluk ölçeği (SynapseGauge).
+________________________________________
+BÖLÜM 6: ULTRA AKICILIK, PERFORMANS VE ALTYAPI OPTİMİZASYONLARI
+1.	Çift Kanallı Web Worker Altyapısı (CPU Offloading):
+o	Cihazdaki animasyonların 60fps'in altına düşmesini önlemek için, arka planda çalışan ve CPU'yu yoran tüm ağır işler (notların şifrelenmesi/şifresinin çözülmesi, use-healer.ts şifre iyileştirme kontrolleri, lokal BM25 veri aramaları ve senkronizasyon kuyruğu işlemleri) ana tarayıcı thread'inden alınarak arka plandaki Web Worker'lara devredilir.
+2.	Kusursuz Framer Motion Animasyon Düzeni:
+o	borderColor, transparent gibi CSS interpolasyon çakışmalarına neden olan animasyonlar tasarımdan temizlenmeli; bunun yerine opaklık (opacity), x-y dikey ve yatay kaymalar, ölçeklendirme (scale) gibi tarayıcı donanım hızlandırıcısını (GPU) kullanan pürüzsüz animasyonlar tercih edilmelidir.
+o	Devasa liste görünümlerinde, tarayıcının DOM'u şişirerek donmasını engellemek için dikey/yatay sanallaştırma (virtualization) kullanılmalıdır. Sadece ekranda görünen öğeler DOM'a basılmalıdır.
+3.	Ses ve Taktil Deneyim:
+o	Karar anlarında, not kaydırıp silerken (Swipe to Delete) veya başarılı senkronizasyonlarda çok hafif, premium "click/success" ses efektleri (Haptic Audio) çalınmalıdır.
+
+
+
+
+
+Sunduğunuz taslakları ve önceki yapay zeka çıktısını detaylıca analiz ettim.
+Önceki modelin hazırladığı yönerge genel olarak güçlü bir çerçeve sunmakla
+birlikte, bir yapay zeka kodlama asistanının (Cursor, Claude, Devin vb.) kod
+üretirken sıklıkla çıkmaza girdiği, eksik bıraktığı veya halüsinasyon gördüğü
+bazı kritik gri alanlar barındırıyor.
+
+Tümevarım yöntemiyle bu boşlukları doldurmak adına tespit ettiğim ve nihai
+isteme (prompt) entegre ettiğim kritik geliştirmeler şunlardır:
+
+1.  Vite Uyumlu Web Worker Yaşam Döngüsü: Yapay zeka modelleri genellikle
+    standart tarayıcı worker tanımlarını yazar ancak bu tanımlar Vite
+    paketleyicisinde (bundler) derleme hatalarına sebep olur. Doğru Vite Worker
+    import syntax'ı (new URL(..., import.meta.url)) şablona eklendi.
+2.  Misafirlikten Buluta Geçiş (Guest-to-Cloud Merge) Senaryosu: Yerel öncelikli
+    (Local-First) yapılarda kullanıcının giriş yapmadan önce yazdığı lokal
+    verilerin, giriş yaptıktan sonra Supabase bulut veritabanıyla nasıl entegre
+    edileceği (kaybolmadan birleştirilmesi) algoritma düzeyinde tanımlandı.
+3.  Ayrıntılı Dexie.js Şeması ve "Pending Mutations" (Kuyruk) Yapısı: Çevrimdışı
+    senkronizasyonun sorunsuz çalışması için gerekli veritabanı şeması ve kuyruk
+    yapısı teknik detaylarıyla taslağa döküldü.
+4.  Web Audio API Parametreleri (Tesla Vibe): Gelişmiş yapay zeka modellerinin
+    ses üretirken "cızırtılı veya çok yüksek sesler" üretmesini engellemek için,
+    osilatör tabanlı premium ses profillerinin frekans ve milisaniye bazlı
+    parametreleri netleştirildi.
+5.  Özelleştirilmiş Klasör Yapısı (Folder Tree): Modelin dosyaları nereye
+    yazacağını şaşırmaması için Clean Architecture prensiplerine uygun, tam
+    ölçekli bir dizin ağacı oluşturuldu.
+
+Aşağıda, başka bir gelişmiş yapay zeka modeline doğrudan verip tek seferde sıfır
+hata ile kodlama başlatabileceğiniz "Sanctuary OS Master Blueprint V3.0" master
+prompt'unu bulabilirsiniz:
+
+🛑 SYSTEM DIRECTIVE: SANCTUARY OS MASTER BLUEPRINT V3.0 (THE EXECUTABLE SPECIFICATION)
+
+ROLE: Senior Principal AI Architect & Full-Stack Systems Engineer CONTEXT: You
+are not a simple AI assistant. You build software-hardware synthesis
+environments matching Apple/Tesla performance levels and Palantir-grade data
+pipelines. MISSION: Code "The Sanctuary", a local-first, offline-ready,
+cognitively structured Second Brain & Venture Lab ecosystem.
+
+⚠️ ABSOLUTE BOUNDARIES & ZERO-ERRORS RED LINES
+
+1.  LOCALIZATION: Every UI string, placeholder, tool-tip, label, modal, alert,
+    and error message MUST be in flawless, natural Turkish. Absolutely NO
+    English words in the user interface. Code variables, database columns, and
+    system keys remain in clean English.
+2.  ZERO MOCK DATA: Do not generate mockData.ts or temporary lists. Use
+    IndexedDB (Dexie.js) as the primary source of truth. If the database is
+    empty, render beautiful empty state layouts (in Turkish) urging the user to
+    write their first note.
+3.  ARCHITECTURE SAFLIĞI (CLEAN CODE): Do not dump logic in App.tsx. Strictly
+    follow the provided folder tree. Use TypeScript in strict mode (strict:
+    true). Avoid any at all costs; use explicit union types, interfaces, or
+    generics.
+4.  NO INFINTIE SPINNING / DEAD LOCKS: Every async action must be protected with
+    try/catch and UI-bound error indicators. Wrap key layout boundaries with
+    React ErrorBoundary.
+
+📁 SYSTEM FOLDER ARCHITECTURE
+
+Implement this folder structure exactly:
+
+src/
+├── assets/          # Static audio generators, micro-assets
+├── components/      # Global shared UI (Shadcn primitives)
+│   ├── ui/          # Buttons, Dialogs, Drawers, Accordions
+│   └── feedback/    # Glass-box terminal logs, Toast alerts
+├── features/        # Main application domains
+│   ├── dashboard/   # Bento grid dashboard, Semantic zoom UI
+│   ├── notes/       # All Notes category blocks, Accordion view
+│   ├── editor/      # Tiptap/Milkdown encrypted text editor
+│   ├── brain/       # Venture Lab, 2D Synaptic Network Graph
+│   └── oracle/      # Chat drawer, Persona rails, hybrid RAG
+├── hooks/           # useNotes, useSync, useAudioHaptic, useCrypto
+├── services/        # supabaseClient.ts, dexieDb.ts
+├── store/           # Zustand modules (uiStore.ts, authStore.ts)
+├── types/           # types.ts (Flawless TS definitions)
+├── workers/         # sync.worker.ts, crypto.worker.ts
+├── App.tsx          # Router and Global Providers layout only
+└── main.tsx         # Entrypoint
+
+
+💾 SECTION 1: DATABASE STRUCTURE & SYNC PIPELINE
+
+1.1 Local Database Schema (Dexie.js / IndexedDB)
+
+// types.ts
+export interface SanctuaryNote {
+  id: string; // UUID v4
+  domain: 'BUSINESS' | 'PERSONAL' | 'LIFE_OS' | 'CREATIVE' | 'JOURNAL';
+  title: string;
+  content: string; // Encrypted string representation of Markdown/JSON
+  tags: string[];
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  is_pinned: boolean;
+  created_at: number; // Unix timestamp
+  updated_at: number; // Unix timestamp
+  is_deleted: boolean; // Soft delete flag
+}
+
+export interface PendingMutation {
+  id?: number; // Auto-incrementing local ID
+  note_id: string;
+  action: 'INSERT' | 'UPDATE' | 'DELETE';
+  payload: string; // Encrypted JSON payload of the note
+  timestamp: number;
+}
+
+1.2 The Local-First Sync Engine & Conflict Resolution
+
+  - Write Path: Every keypress in the editor initiates an 800ms debounce. The
+    editor calls useNotes.updateNote(), which immediately writes to Dexie notes
+    and appends a record to pending_mutations.
+  - Worker Instantiation (Vite Compliant): Use the following syntax to prevent
+    Vite build errors:
+    const syncWorker = new Worker(
+      new URL('../workers/sync.worker.ts', import.meta.url),
+      { type: 'module' }
+    );
+  - Sync Protocol (Online State): When navigator.onLine triggers, the worker
+    processes pending_mutations sequentially.
+  - Conflict Handling: Before overwriting Supabase, compare updated_at. If
+    supabaseNote.updated_at > localNote.updated_at, do NOT overwrite. Dispatch a
+    window.dispatchEvent(new CustomEvent('sanctuary:conflict', { detail: {
+    local, cloud } })). Pop up a gorgeous side-by-side comparison modal in
+    Turkish letting the user choose which version to keep.
+  - Guest-to-Cloud Merge: When a guest logs in, locate all notes with no owner
+    ID, assign them the new authenticated user's ID, flag them as pending
+    mutations, and trigger the sync engine.
+
+🔒 SECTION 2: CLIENT-SIDE ZERO-KNOWLEDGE ENCRYPTION
+
+  - Key Generation: If Guest, derive a key using WebCrypto API from a persistent
+    client-side identifier. If Logged-in, derive the AES-256-GCM key using
+    PBKDF2 (100,000 iterations, SHA-256 salt) from the user's master
+    password/token.
+  - Data Privacy: Raw data never touches disk/IndexedDB or Supabase in
+    plaintext. The worker encrypts data in the background. Supabase only stores
+    the final ciphertext and iv values. Decryption happens dynamically in memory
+    when a note is loaded into the state or editor.
+
+🧠 SECTION 3: LANGGRAPH COGNITIVE AGENTS & ORACLE CHAT
+
+3.1 Cognitive State Machine (6 Nodes)
+
+Your backend runs Python FastAPI + LangGraph. The frontend receives events using
+Server-Sent Events (SSE). Render a "Glass-Box" terminal view showing exactly
+which node is processing:
+
+1.  Sınır Veri Avcısı (Edge-Data Crawler): Scrapes niche micro-pain points.
+2.  Yanal Çarpışma Motoru (Lateral Collision Engine): Combines the pain point
+    with gamification/biological evolution theories to generate a highly unique
+    SaaS blueprint.
+3.  Truva Atı Mimarı (Trojan Horse Architect): Designs an MVP launch strategy
+    requiring zero budget.
+4.  Katil Savcı (Red-Teaming AI): Tears the idea down using security, legal
+    (KVKK/GDPR), cost, and user friction arguments.
+5.  Hendek Mühendisi (Anti-Fragile Moat Builder): Converts weak points
+    identified by the prosecutor into moats (e.g., local AI nodes for data
+    safety).
+6.  Steve Jobs Orkestratör (Orchestrator): Generates a beautiful structured JSON
+    flow of the validated venture plan.
+
+3.2 Kahin Oktay (Oracle Chat Drawer) & Hybrid RAG
+
+  - Persona Rails: Selectable via horizontal sliding bar in the right-drawer
+    chat:
+      - Bilge (Sage): Calm, logical guide.
+      - Şeytanın Avukatı (Devil's Advocate): Ruthless critic.
+      - Gelecekçi (Futurist): Maps the idea 10 years into the future.
+      - Stratejist (Strategist): Explains monetization and competitive dynamics.
+      - Sinerjist (Synergist): Evaluates semantic links between the active
+        prompt and notes written weeks ago.
+  - Hybrid RAG Fallback Algorithm:
+      - Online Mode: Convert the user input to embeddings via Gemini API, run
+        Cosine Similarity via Supabase pgvector (match_notes), inject the top 5
+        relevant notes into the chat context.
+      - Offline Fallback Mode: If connection fails, switch instantly to Web
+        Worker running a client-side BM25 / TF-IDF keyword search over decrypted
+        local IndexedDB text fields. Display a subtle micro-badge: "Çevrimdışı
+        yerel bellek taranıyor...".
+
+🎨 SECTION 4: APPLE-GRADE UI / UX PROTOCOLS
+
+4.1 Visual Theme
+
+  - Palette: Cosmic Dark Slate. Background: Pure pitch-black (#000000). Borders:
+    Deep Charcoal (#1a1a1a). Accents: Soft White text (#ffffff), Muted Slate
+    text (#666666), and very subtle Neon Purple/Lilac (#a855f7) indicators for
+    cognitive processing.
+  - Animations: Strictly use transform (translate, scale) and opacity in Framer
+    Motion to prevent browser layout thrashing. Never animate width, height, or
+    border-color.
+
+4.2 Neural Dashboard Layout
+
+  - Bento Grid Priority Cards: Show up to 3 high-priority cards:
+      - 1 Card: Full width.
+      - 2 Cards: Split 50/50.
+      - 3+ Cards: 1 large Hero card on the left, 2 smaller vertical stacked
+        cards on the right.
+  - Semantic Zoom: Double-clicking the dashboard canvas scales down all cards
+    via Framer Motion, hiding text content, showing only titles and connecting
+    node lines (using a lightweight canvas or simple CSS lines) to represent the
+    user's mind map.
+
+4.3 All Notes View (CRITICAL LAYOUT MANDATE)
+
+  - Group notes vertically by their domain.
+  - The 5-Note Cap: Show only the 5 most recently updated notes inside each
+    category block.
+  - Center-Aligned View All Button: Exactly below the list of 5 notes, render a
+    centered, minimal button titled "Tümünü Gör".
+  - Accordion Expansion: Clicking "Tümünü Gör" must expand the grid downwards in
+    a smooth Framer Motion height slide. Do not route away or change pages. The
+    button text must dynamically transition to "Daha Az Göster" with an
+    upward-pointing chevron.
+  - Quick Edit: Clicking any note card opens a slide-over Drawer on the right
+    hosting the TipTap markdown editor with real-time encrypted autosave.
+
+⚡ SECTION 5: SENSORY INTEGRATION (AUDIO-TACTILE SENSORS)
+
+5.1 Haptic Feedback (Vibration API)
+
+Invoke tactile feel using navigator.vibrate:
+
+  - Soft Click: navigator.vibrate(10) (Used for casual button hits).
+  - Success Double-Click: navigator.vibrate([15, 30, 15]) (Used for successful
+    saving, sync completion).
+  - Error Buzz: navigator.vibrate([100, 50, 100]) (Used for version conflict,
+    bad network, or deletion).
+
+5.2 Synthetic Audio Engine (Web Audio API)
+
+Do not load .mp3 files. Generate high-quality acoustic responses dynamically via
+oscillators:
+
+// useAudioHaptic.ts
+export const playSound = (type: 'click' | 'success' | 'error') => {
+  const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  if (type === 'click') {
+    osc.frequency.setValueAtTime(800, ctx.currentTime);
+    gain.gain.setValueAtTime(0.05, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.015);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.015);
+  } else if (type === 'success') {
+    // Elegant high double beep
+    osc.frequency.setValueAtTime(600, ctx.currentTime);
+    osc.frequency.setValueAtTime(900, ctx.currentTime + 0.04);
+    gain.gain.setValueAtTime(0.04, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.1);
+  } else if (type === 'error') {
+    // Muted deep warning buzz
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(120, ctx.currentTime);
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+  }
+};
+
+🚀 CODE GENERATION MANDATE (EXECUTION STEPS)
+
+When writing files, proceed systematically. Follow this plan:
+
+1.  Phase 1 (The Core): Create src/types/types.ts defining all types without
+    using any. Then, establish src/services/dexieDb.ts setting up IndexedDB and
+    the PendingMutation tables.
+2.  Phase 2 (The Workers): Code the background Web Workers (sync.worker.ts,
+    crypto.worker.ts) handling AES-256 encryption, decryption, and BM25 offline
+    local search algorithms.
+3.  Phase 3 (The Hooks): Implement state hooks: useNotes (with Zustand storage
+    mapping and IndexedDB write), useCrypto, and useAudioHaptic.
+4.  Phase 4 (The Views): Build the critical All Notes View with the 5-note cap,
+    center-aligned accordion toggle, and Framer Motion layout animations.
+5.  Phase 5 (The Cognitive Layer): Build the Oracle chat interface, the persona
+    switcher bar, and the SSE connection for the Venture Lab terminal.
+
+BEGIN IMPLEMENTATION. START BY OUTPUTTING THE COMPLETE types/types.ts AND THE
+services/dexieDb.ts CODE.
+
+Yapay zeka asistanı bu Master Blueprint yönergesini aldığında, uygulamanın
+teknik mimarisini, kullanıcı arayüzü kısıtlamalarını ve hatta ses/titreşim gibi
+tüm mikro detaylarını başka hiçbir soru sormaya gerek kalmadan uçtan uca
+kusursuz bir şekilde inşa edebilecektir.
+
+“
+
+
+
+veya make.com üzerinden yada n8n üzerinden gibi nasıl yapıldığı farketmeksizin benim için otomasyon ajanlarını kurabilmesini istiyorum bu sitemin. Ben tek bir noktadan sadece bir sistemin bir giriş noktasından istek talep düşünce yada fikirlerimi belirttiğimde sistem kendi içinde çok katmanlı çok kollu bir şekilde çalışabilecek, en üst düzey yönetici beyin ai modeli bu alt katmanlı ve kollu sistemi yönetecek, benim istek talep düşünce ve fikirlerimi bu alt kollarda ki ve katmanlarda ki ai modellerine sistemlerine yönlendirme dağıtma iş yaptırma sonuçlarını toplama ve bana geri sunma gibi tüm işletim sistemini kusursuzca yönetecek, sanki ben bir firmanın patronu gibi olacağım ve bu baş ai model ajanı is bu farbikanın genel müdürü (yada ceo’su)  gibi olacak ve diğer tüm alt katmanları kolları ise bu firmanın tüm birimleri ile çaışanları gibi olacak ve genel müdür (ceo) yani ana ai modeli tüm sistemi kusursuz bir şekilde yönetecek. Ana ai modeli benim istek talep düşünce ve fikirlerimi ben tam ifade edemesem de eksik ifade etsem de boşluklar olsada tümavarım yöntemi ile benim söylediklerimi sanki 10 metre karelik gibi düşünüp 1000 metre karelik alana ekiksiz hatasız kusurusz tam kapsmalı tam bütüncül en mükemmel sade ent direkt %100 gerçeklere dayalı %100 benim istek talep ifade ve söylemlerimi baz alacak ve eksiksiz yerine getirebilecek şekidle (benim istek söylem talep fikir ve düşüncelerimi kendince küçültmeyecek yada psifize etmeyecek yada geçiştirmeyecek, tamamını %100 baz alarak net direkt mutlak keskin rasyonel gerçekçi eksiksiz kusursuz hatasız bir şekilde sonuç üretecek. Ben not uygulamasını tarif ettiğimde bir şekilde her nasıl yapılması gerkeiyorsa o not uygulamsını bir şekilde yapabilecek (olduracak en iyi şekilde, öyle dümenden basitçe geçiştirmelik değil, eğer olamıyorsa en iyi olabilmesi için gerekenleri net direkt mutlak şekilde söyleyecek ki beni boşu boşuna uğraştırmasın), yada ben bir fikrimi düşüncemi sorduğumda o konuda ana yönetici ai modeli alt kademedeki araştırma düşünme ai modeline bunu soracak fakat aldığı cevabı ise kendisi kontrol edecek ve eğer daha kendisi tamin edici bir sonuç alamazsa alt katmandaki bu ai modeline bu cevap tatmin edici yeterli değil diyerek benim için gerçekten tatmin edici yeterli seviyede ki sonucun üretilebilmesini sağlattıracak, yada istediğim uygulamayı aşama aşama kontrollerini yapacak ve istediğim uygulamanın eksiksiz hatasız kusursuz tam istediim seivyede tam istediğim profesyonellikte kusurusuzlukta kalitede yapılıp yapılmadığını denetleyip tam istediğim gibi tam istediğim en üst seviye de standartlarda kalitede profesyonellikte mükemmellikte yapılmasını bir şekilde sağlayacak, beni uğraştırmayacak. Gerekli yapay zeka ajanlarını kurması gerektiğinde her ne gerekiyorsa bir şekilde kendisi halledip en üst düzeyde en üst kalitede en üst profesyonellikte bunların olmasını yapılmasını sağlayacak denetleyecek kontrol edecek ve herşey okeyse bana sunacak, sadece ve sadece kendisnin mutlak zorlukla geçemediği durumlarda beni bilgilendirip o aşamanın geçilmesini sağlattırıp sonra kaldığı yerden devam edecek. 
+
+

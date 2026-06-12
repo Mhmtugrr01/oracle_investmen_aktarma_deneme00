@@ -1,505 +1,753 @@
 """
-HFT QUANT GÖZCÜ AJANI — Gelişmiş Piyasa Analizi
-- USDT/BTC Dominance
-- VIX, DXY, Total Market Cap
-- RSI, EMA, MACD, Bollinger Bantları
-- Otomatik Toplama/Dağıtım Bölgesi Tespiti
+ORACLE HFT QUANT AJAN V3 — Kurumsal Seviye Piyasa Analizi
+
+Özellikler:
+- Çok zaman çerçeveli analiz: Günlük + 4H (1H veriden türetilir)
+- RSI < 25 + F&G < 20 = GÜÇLÜ ALIM (tarihsel kanıta dayalı doğru skorlama)
+- Destek/Direnç: Fibonacci, EMA seviyeleri, psikolojik bölgeler
+- Kesin Giriş Bölgesi + Stop-Loss + Kâr Hedefleri (T1/T2/T3)
+- Risk/Ödül oranı + Pozisyon büyüklüğü önerisi
 - ASLA otomatik işlem yapmaz — sadece analiz + Telegram inline onay
 """
 import asyncio
 from datetime import datetime
-from core.llm import llm_call
-from core.config import settings
 from loguru import logger
 
 
+# ─── Ana Giriş ───────────────────────────────────────────────────────────────
+
 async def run_quant_agent(task_description: str) -> str:
-    logger.info("[QUANT AGENT] Starting advanced market analysis")
+    logger.info("[QUANT AGENT] Kurumsal piyasa analizi başlatılıyor")
 
     try:
         import yfinance as yf
-        import pandas as pd
     except ImportError:
-        return "⚠️ yfinance kurulu değil."
+        return "⚠️ yfinance kurulu değil: `pip install yfinance`"
 
-    symbols = await _extract_symbols(task_description)
-    logger.info(f"[QUANT AGENT] Symbols: {symbols}")
+    symbols = _extract_symbols(task_description)
+    logger.info(f"[QUANT AGENT] Semboller: {symbols}")
 
+    # Paralel veri çekimi
     macro, cg_data, fg_data = await asyncio.gather(
         _fetch_macro_data(),
         _fetch_coingecko_data(),
         _fetch_fear_greed(),
         return_exceptions=True,
     )
-    if isinstance(macro, Exception):
-        macro = {}
-    if isinstance(cg_data, Exception):
-        cg_data = {}
-    if isinstance(fg_data, Exception):
-        fg_data = {}
+    macro = macro if not isinstance(macro, Exception) else {}
+    cg_data = cg_data if not isinstance(cg_data, Exception) else {}
+    fg_data = fg_data if not isinstance(fg_data, Exception) else {}
+
+    fg_value = fg_data.get("value", 50)
+    vix = macro.get("VIX", {}).get("price", 15.0)
 
     analyses = []
-    for sym in symbols[:5]:
+    for sym in symbols[:4]:
         try:
-            a = await _analyze_symbol(sym)
+            a = await _analyze_symbol_full(sym, fg_value=fg_value, vix=vix)
             analyses.append(a)
         except Exception as e:
-            logger.error(f"[QUANT] {sym} error: {e}")
+            logger.error(f"[QUANT] {sym} hatası: {e}")
             analyses.append({"symbol": sym, "error": str(e)})
 
-    report = await _build_full_report(macro, analyses, task_description, cg_data, fg_data)
+    report = _build_professional_report(macro, analyses, cg_data, fg_data, task_description)
     return report
 
 
-async def _extract_symbols(task: str) -> list[str]:
-    """Metinden analiz edilecek sembolleri çıkarır — LLM kullanmaz, kural tabanlı."""
+# ─── Sembol Çıkarma ───────────────────────────────────────────────────────────
+
+def _extract_symbols(task: str) -> list[str]:
     task_upper = task.upper()
-    known_map = {
+    known = {
         "BTC": "BTC-USD", "BITCOIN": "BTC-USD",
         "ETH": "ETH-USD", "ETHEREUM": "ETH-USD",
         "BNB": "BNB-USD", "SOL": "SOL-USD", "ADA": "ADA-USD",
-        "XRP": "XRP-USD", "DOGE": "DOGE-USD",
+        "XRP": "XRP-USD", "DOGE": "DOGE-USD", "AVAX": "AVAX-USD",
+        "LINK": "LINK-USD", "DOT": "DOT-USD", "MATIC": "MATIC-USD",
         "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL",
         "TSLA": "TSLA", "NVDA": "NVDA", "AMZN": "AMZN",
-        "GOLD": "GC=F", "ALTIN": "GC=F",
-        "SILVER": "SI=F", "OIL": "CL=F",
-        "SP500": "^GSPC", "NASDAQ": "^IXIC",
+        "GOLD": "GC=F", "ALTIN": "GC=F", "GÜMÜŞ": "SI=F",
+        "OIL": "CL=F", "SP500": "^GSPC", "NASDAQ": "^IXIC",
     }
-
     found = []
-    for keyword, ticker in known_map.items():
-        if keyword in task_upper and ticker not in found:
+    for kw, ticker in known.items():
+        if kw in task_upper and ticker not in found:
             found.append(ticker)
+    return found[:4] if found else ["BTC-USD", "ETH-USD"]
 
-    if not found:
-        found = ["BTC-USD", "ETH-USD"]
 
-    return found[:5]
-
+# ─── Veri Kaynakları ─────────────────────────────────────────────────────────
 
 async def _fetch_coingecko_data() -> dict:
-    """CoinGecko ücretsiz API — gerçek BTC dominance ve market cap."""
     import aiohttp
-    result = {}
     try:
-        async with aiohttp.ClientSession() as session:
-            url = "https://api.coingecko.com/api/v3/global"
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    gd = data.get("data", {})
-                    btc_dom = gd.get("market_cap_percentage", {}).get("btc", 0)
-                    eth_dom = gd.get("market_cap_percentage", {}).get("eth", 0)
-                    total_mc = gd.get("total_market_cap", {}).get("usd", 0)
-                    total_vol = gd.get("total_volume", {}).get("usd", 0)
-                    result = {
-                        "btc_dominance": round(btc_dom, 2),
-                        "eth_dominance": round(eth_dom, 2),
-                        "total_market_cap_b": round(total_mc / 1e9, 1),
-                        "total_volume_b": round(total_vol / 1e9, 1),
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                "https://api.coingecko.com/api/v3/global",
+                timeout=aiohttp.ClientTimeout(total=8)
+            ) as r:
+                if r.status == 200:
+                    d = (await r.json()).get("data", {})
+                    return {
+                        "btc_dominance": round(d.get("market_cap_percentage", {}).get("btc", 0), 2),
+                        "eth_dominance": round(d.get("market_cap_percentage", {}).get("eth", 0), 2),
+                        "total_market_cap_b": round(d.get("total_market_cap", {}).get("usd", 0) / 1e9, 1),
+                        "total_volume_b": round(d.get("total_volume", {}).get("usd", 0) / 1e9, 1),
                     }
-                    logger.debug(f"[QUANT COINGECKO] BTC Dom: %{btc_dom:.1f}, Total: ${total_mc/1e9:.0f}B")
     except Exception as e:
-        logger.warning(f"[QUANT COINGECKO] Failed: {e}")
-    return result
+        logger.warning(f"[QUANT CG] {e}")
+    return {}
 
 
 async def _fetch_fear_greed() -> dict:
-    """Alternative.me Fear & Greed Index — ücretsiz, API key yok."""
     import aiohttp
-    result = {}
     try:
-        async with aiohttp.ClientSession() as session:
-            url = "https://api.alternative.me/fng/?limit=1"
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=6)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    entry = data.get("data", [{}])[0]
-                    value = int(entry.get("value", 0))
-                    classification = entry.get("value_classification", "Nötr")
-                    result = {"value": value, "classification": classification}
-                    logger.debug(f"[QUANT F&G] {value} — {classification}")
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                "https://api.alternative.me/fng/?limit=1",
+                timeout=aiohttp.ClientTimeout(total=6)
+            ) as r:
+                if r.status == 200:
+                    entry = (await r.json()).get("data", [{}])[0]
+                    return {
+                        "value": int(entry.get("value", 50)),
+                        "classification": entry.get("value_classification", "Nötr"),
+                    }
     except Exception as e:
-        logger.warning(f"[QUANT F&G] Failed: {e}")
-    return result
+        logger.warning(f"[QUANT F&G] {e}")
+    return {}
 
 
 async def _fetch_macro_data() -> dict:
-    """Makro göstergeler: VIX, DXY, BTC/USDT Dominance, Total Market Cap."""
     import yfinance as yf
-
-    macro = {}
-    macro_tickers = {
-        "VIX": "^VIX",
-        "DXY": "DX-Y.NYB",
-        "SP500": "^GSPC",
-        "GOLD": "GC=F",
-        "BTC": "BTC-USD",
-        "ETH": "ETH-USD",
-        "TOTAL_CRYPTO": "BTC-USD",
-    }
-
     loop = asyncio.get_event_loop()
-
-    for name, ticker_sym in macro_tickers.items():
+    macro = {}
+    tickers = {
+        "VIX": "^VIX", "DXY": "DX-Y.NYB", "SP500": "^GSPC",
+        "GOLD": "GC=F", "BTC": "BTC-USD", "ETH": "ETH-USD",
+    }
+    for name, sym in tickers.items():
         try:
-            t = await loop.run_in_executor(None, lambda s=ticker_sym: yf.Ticker(s))
-            hist = await loop.run_in_executor(None, lambda tt=t: tt.history(period="5d"))
-            if not hist.empty:
-                price = float(hist["Close"].iloc[-1])
-                prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else price
-                chg = ((price - prev) / prev) * 100
-                macro[name] = {"price": price, "change_pct": round(chg, 2)}
+            t = await loop.run_in_executor(None, lambda s=sym: yf.Ticker(s))
+            h = await loop.run_in_executor(None, lambda tt=t: tt.history(period="5d"))
+            if not h.empty:
+                price = float(h["Close"].iloc[-1])
+                prev = float(h["Close"].iloc[-2]) if len(h) > 1 else price
+                macro[name] = {
+                    "price": price,
+                    "change_pct": round((price - prev) / prev * 100, 2),
+                }
         except Exception as e:
-            logger.warning(f"[QUANT MACRO] {name} failed: {e}")
-            macro[name] = {"price": 0, "change_pct": 0}
-
-    try:
-        btc_price = macro.get("BTC", {}).get("price", 0)
-        eth_price = macro.get("ETH", {}).get("price", 0)
-        total_approx = btc_price * 19_700_000 + eth_price * 120_000_000
-        btc_dom = (btc_price * 19_700_000 / total_approx * 100) if total_approx > 0 else 0
-        macro["BTC_DOM_APPROX"] = {"price": round(btc_dom, 1), "change_pct": 0}
-    except Exception:
-        macro["BTC_DOM_APPROX"] = {"price": 0, "change_pct": 0}
-
+            logger.warning(f"[QUANT MACRO] {name}: {e}")
     return macro
 
 
-async def _analyze_symbol(symbol: str) -> dict:
-    """Tek sembol için tam teknik analiz: RSI, EMA, MACD, Bollinger, hacim."""
-    import yfinance as yf
-    import numpy as np
-
-    clean = symbol.replace("/", "-").replace("USDT", "-USD")
-    if clean.endswith("-USD-USD"):
-        clean = clean[:-4]
-
-    loop = asyncio.get_event_loop()
-    ticker = await loop.run_in_executor(None, lambda: yf.Ticker(clean))
-    hist = await loop.run_in_executor(None, lambda: ticker.history(period="90d"))
-
-    if hist.empty:
-        return {"symbol": symbol, "error": "Veri yok"}
-
-    close = hist["Close"]
-    high = hist["High"]
-    low = hist["Low"]
-    volume = hist["Volume"]
-
-    rsi = _calc_rsi(close)
-    ema20 = float(close.ewm(span=20).mean().iloc[-1])
-    ema50 = float(close.ewm(span=50).mean().iloc[-1]) if len(close) >= 50 else ema20
-    ema200 = float(close.ewm(span=200).mean().iloc[-1]) if len(close) >= 200 else ema50
-
-    macd_line, signal_line, histogram = _calc_macd(close)
-
-    bb_upper, bb_mid, bb_lower = _calc_bollinger(close)
-
-    current = float(close.iloc[-1])
-    prev = float(close.iloc[-2]) if len(close) > 1 else current
-    change_pct = ((current - prev) / prev) * 100
-
-    vol_avg = float(volume.mean())
-    vol_curr = float(volume.iloc[-1])
-    vol_ratio = vol_curr / vol_avg if vol_avg > 0 else 1.0
-
-    zone, zone_strength = _detect_zone(
-        rsi=rsi, ema20=ema20, ema50=ema50, ema200=ema200,
-        price=current, bb_upper=bb_upper, bb_lower=bb_lower,
-        macd_hist=histogram, vol_ratio=vol_ratio, change_pct=change_pct,
-    )
-
-    signal, confidence = _generate_signal(
-        rsi=rsi, ema20=ema20, ema50=ema50, price=current,
-        change_pct=change_pct, macd_hist=histogram, vol_ratio=vol_ratio,
-        bb_upper=bb_upper, bb_lower=bb_lower,
-    )
-
-    bb_pct = ((current - bb_lower) / (bb_upper - bb_lower) * 100) if (bb_upper - bb_lower) > 0 else 50
-
-    return {
-        "symbol": symbol,
-        "price": current,
-        "change_pct": round(change_pct, 2),
-        "rsi": round(rsi, 1),
-        "ema20": round(ema20, 4),
-        "ema50": round(ema50, 4),
-        "ema200": round(ema200, 4),
-        "macd": round(macd_line, 4),
-        "macd_signal": round(signal_line, 4),
-        "macd_hist": round(histogram, 4),
-        "bb_upper": round(bb_upper, 4),
-        "bb_lower": round(bb_lower, 4),
-        "bb_pct": round(bb_pct, 1),
-        "vol_ratio": round(vol_ratio, 2),
-        "zone": zone,
-        "zone_strength": zone_strength,
-        "signal": signal,
-        "confidence": confidence,
-    }
-
+# ─── Teknik Analiz — Temel Hesaplamalar ──────────────────────────────────────
 
 def _calc_rsi(prices, period: int = 14) -> float:
     delta = prices.diff()
-    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss.replace(0, 0.001)
+    gain = delta.where(delta > 0, 0).rolling(period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+    rs = gain / loss.replace(0, 1e-10)
     rsi = 100 - (100 / (1 + rs))
     val = float(rsi.iloc[-1])
     return val if not (val != val) else 50.0
 
 
 def _calc_macd(prices, fast=12, slow=26, signal=9):
-    ema_fast = prices.ewm(span=fast).mean()
-    ema_slow = prices.ewm(span=slow).mean()
-    macd = ema_fast - ema_slow
+    ef = prices.ewm(span=fast).mean()
+    es = prices.ewm(span=slow).mean()
+    macd = ef - es
     sig = macd.ewm(span=signal).mean()
-    hist = macd - sig
-    return float(macd.iloc[-1]), float(sig.iloc[-1]), float(hist.iloc[-1])
+    return float(macd.iloc[-1]), float(sig.iloc[-1]), float((macd - sig).iloc[-1])
 
 
-def _calc_bollinger(prices, period=20, std_dev=2):
-    mid = prices.rolling(window=period).mean()
-    std = prices.rolling(window=period).std()
-    upper = float((mid + std_dev * std).iloc[-1])
-    lower = float((mid - std_dev * std).iloc[-1])
-    mid_val = float(mid.iloc[-1])
-    return upper, mid_val, lower
+def _calc_bollinger(prices, period=20, std_dev=2.0):
+    mid = prices.rolling(period).mean()
+    std = prices.rolling(period).std()
+    return (
+        float((mid + std_dev * std).iloc[-1]),
+        float(mid.iloc[-1]),
+        float((mid - std_dev * std).iloc[-1]),
+    )
 
 
-def _detect_zone(
-    rsi, ema20, ema50, ema200, price,
-    bb_upper, bb_lower, macd_hist, vol_ratio, change_pct
-) -> tuple[str, str]:
+def _calc_atr(high, low, close, period=14) -> float:
+    tr_list = []
+    for i in range(1, min(period + 1, len(close))):
+        hl = float(high.iloc[-i]) - float(low.iloc[-i])
+        hc = abs(float(high.iloc[-i]) - float(close.iloc[-i - 1]))
+        lc = abs(float(low.iloc[-i]) - float(close.iloc[-i - 1]))
+        tr_list.append(max(hl, hc, lc))
+    return sum(tr_list) / len(tr_list) if tr_list else float(close.iloc[-1]) * 0.02
+
+
+def _calc_stochastic(high, low, close, k_period=14, d_period=3) -> tuple[float, float]:
+    lowest_low = low.rolling(k_period).min()
+    highest_high = high.rolling(k_period).max()
+    rng = highest_high - lowest_low
+    k = 100 * (close - lowest_low) / rng.replace(0, 1e-10)
+    d = k.rolling(d_period).mean()
+    return float(k.iloc[-1]), float(d.iloc[-1])
+
+
+# ─── Sinyal Motoru V2 — Tarihsel Kanıta Dayalı Doğru Skorlama ────────────────
+
+def _generate_signal_v2(
+    rsi: float, ema20: float, ema50: float, ema200: float,
+    price: float, change_pct: float, macd_hist: float,
+    vol_ratio: float, bb_upper: float, bb_lower: float,
+    fg_value: float = 50, vix: float = 15,
+    rsi_4h: float = 50, stoch_k: float = 50,
+) -> dict:
     """
-    Otomatik Toplama/Dağıtım Bölgesi Tespiti.
-    Birden fazla göstergenin kesişimine göre karar verir.
+    Kurumsal seviye çok faktörlü sinyal motoru.
+    RSI<25 + F&G<20 tarihsel olarak Bitcoin'de en güçlü alım setupu.
     """
-    acc_score = 0
-    dist_score = 0
+    score = 0
+    bull_reasons = []
+    bear_reasons = []
 
-    if rsi < 35:
-        acc_score += 3
-    elif rsi < 45:
-        acc_score += 1
-    if rsi > 65:
-        dist_score += 3
-    elif rsi > 55:
-        dist_score += 1
+    # ── RSI (En kritik gösterge, ±45 puan) ──────────────────────────
+    if rsi <= 20:
+        score += 45
+        bull_reasons.append(f"RSI {rsi:.1f} — EKSTRİM AŞIRI SATIM (tarihsel dip bölgesi)")
+    elif rsi <= 25:
+        score += 38
+        bull_reasons.append(f"RSI {rsi:.1f} — Güçlü aşırı satım (nadir sinyal)")
+    elif rsi <= 30:
+        score += 28
+        bull_reasons.append(f"RSI {rsi:.1f} — Aşırı satım bölgesi")
+    elif rsi <= 40:
+        score += 12
+        bull_reasons.append(f"RSI {rsi:.1f} — Hafif oversold")
+    elif rsi >= 80:
+        score -= 45
+        bear_reasons.append(f"RSI {rsi:.1f} — AŞIRI ALIM (dönüş riski kritik)")
+    elif rsi >= 70:
+        score -= 28
+        bear_reasons.append(f"RSI {rsi:.1f} — Aşırı alım bölgesi")
+    elif rsi >= 60:
+        score -= 12
 
+    # ── Korku & Açgözlülük (Kripto için kritik, ±30 puan) ────────────
+    if fg_value <= 15:
+        score += 30
+        bull_reasons.append(f"Korku&Açgözlülük {fg_value}/100 — EKSTRİM KORKU (Buffett: 'Herkes korkarken al')")
+    elif fg_value <= 25:
+        score += 22
+        bull_reasons.append(f"Korku&Açgözlülük {fg_value}/100 — Korku bölgesi (tarihsel alım fırsatı)")
+    elif fg_value <= 40:
+        score += 8
+    elif fg_value >= 85:
+        score -= 30
+        bear_reasons.append(f"Korku&Açgözlülük {fg_value}/100 — EKSTRİM AÇGÖZLÜLÜK (Buffett: 'Herkes açgözlüyken sat')")
+    elif fg_value >= 75:
+        score -= 20
+        bear_reasons.append(f"Korku&Açgözlülük {fg_value}/100 — Açgözlülük bölgesi")
+
+    # ── Bollinger Band Konumu (±20 puan) ─────────────────────────────
     bb_range = bb_upper - bb_lower
     if bb_range > 0:
         bb_pos = (price - bb_lower) / bb_range
-        if bb_pos < 0.2:
-            acc_score += 3
-        elif bb_pos < 0.35:
-            acc_score += 1
-        if bb_pos > 0.80:
-            dist_score += 3
-        elif bb_pos > 0.65:
-            dist_score += 1
+        if bb_pos <= 0.10:
+            score += 20
+            bull_reasons.append(f"BB% {bb_pos*100:.0f} — Alt banda değiyor (reversal bölgesi)")
+        elif bb_pos <= 0.25:
+            score += 12
+            bull_reasons.append(f"BB% {bb_pos*100:.0f} — Alt BB bölgesinde")
+        elif bb_pos >= 0.90:
+            score -= 20
+            bear_reasons.append(f"BB% {bb_pos*100:.0f} — Üst banda değiyor (dönüş riski)")
+        elif bb_pos >= 0.75:
+            score -= 12
 
-    if macd_hist > 0 and macd_hist > abs(macd_hist) * 0.1:
-        acc_score += 1
-    elif macd_hist < 0:
-        dist_score += 1
+    # ── Stochastic (%K, ±15 puan) ─────────────────────────────────────
+    if stoch_k <= 15:
+        score += 15
+        bull_reasons.append(f"Stochastic %K {stoch_k:.0f} — Aşırı satım")
+    elif stoch_k <= 25:
+        score += 8
+    elif stoch_k >= 85:
+        score -= 15
+        bear_reasons.append(f"Stochastic %K {stoch_k:.0f} — Aşırı alım")
+    elif stoch_k >= 75:
+        score -= 8
 
-    if vol_ratio > 1.5 and change_pct > 0:
-        acc_score += 2
-    elif vol_ratio > 1.5 and change_pct < 0:
-        dist_score += 2
-    elif vol_ratio < 0.7:
-        acc_score += 1
+    # ── 4H RSI Uyumu (±12 puan) ───────────────────────────────────────
+    if rsi_4h <= 30 and rsi <= 35:
+        score += 12
+        bull_reasons.append(f"4H RSI {rsi_4h:.0f} + Günlük RSI {rsi:.0f} — Çift zaman çerçevesi sinyal uyumu")
+    elif rsi_4h >= 70 and rsi >= 60:
+        score -= 12
 
-    if price > ema200:
-        acc_score += 1
-    else:
-        dist_score += 1
+    # ── EMA Yapısı (±12 puan) ─────────────────────────────────────────
+    if price > ema20 > ema50:
+        score += 12
+        bull_reasons.append("Fiyat EMA20 > EMA50 üzerinde — sağlıklı yükseliş trendi")
+    elif price > ema200:
+        score += 5
+        bull_reasons.append("Fiyat EMA200 üzerinde — uzun vadeli yükseliş trendi korunuyor")
+    elif price < ema20 < ema50:
+        score -= 8  # Küçük penaltı — RSI aşırı satım durumunda override edilebilir
 
-    if acc_score >= 5:
-        strength = "GÜÇLÜ" if acc_score >= 7 else "ORTA"
-        return "🟢 TOPLAMA BÖLGESİ", strength
-    elif dist_score >= 5:
-        strength = "GÜÇLÜ" if dist_score >= 7 else "ORTA"
-        return "🔴 DAĞITIM BÖLGESİ", strength
-    else:
-        return "🟡 NÖTR BÖLGE", "ZAYIF"
-
-
-def _generate_signal(rsi, ema20, ema50, price, change_pct, macd_hist, vol_ratio, bb_upper, bb_lower) -> tuple[str, int]:
-    bullish = 0
-    if rsi < 40:
-        bullish += 25
-    elif rsi > 70:
-        bullish -= 25
-
-    if ema20 > ema50:
-        bullish += 20
-    else:
-        bullish -= 20
-
-    if price > ema20:
-        bullish += 15
-    else:
-        bullish -= 15
-
+    # ── MACD (±10 puan) ──────────────────────────────────────────────
     if macd_hist > 0:
-        bullish += 15
+        score += 10
+        bull_reasons.append("MACD pozitif — momentum yükseliş lehine")
     else:
-        bullish -= 10
+        score -= 5  # Düşük penaltı (RSI extreme iken MACD gecikebilir)
 
-    bb_range = bb_upper - bb_lower
-    if bb_range > 0:
-        bb_pos = (price - bb_lower) / bb_range
-        if bb_pos < 0.3:
-            bullish += 10
-        elif bb_pos > 0.7:
-            bullish -= 10
+    # ── Hacim Analizi (±15 puan) ──────────────────────────────────────
+    if vol_ratio > 1.8 and change_pct > 0:
+        score += 15
+        bull_reasons.append(f"Hacim {vol_ratio:.1f}x ort. + yükseliş — kurumsal alım sinyali")
+    elif vol_ratio > 1.5 and change_pct > 0:
+        score += 8
+    elif vol_ratio > 1.5 and change_pct < 0:
+        score -= 10
+        bear_reasons.append(f"Hacim {vol_ratio:.1f}x ort. + düşüş — satış baskısı")
 
-    if vol_ratio > 1.5 and change_pct > 0:
-        bullish += 15
+    # ── Makro Bağlam (±10 puan) ───────────────────────────────────────
+    if vix < 20:
+        score += 5  # Sakin piyasa ortamı
+    elif vix > 30:
+        score -= 10
+        bear_reasons.append(f"VIX {vix:.0f} — Yüksek piyasa korkusu, volatilite riski")
 
-    if change_pct > 1:
-        bullish += 10
-    elif change_pct < -1:
-        bullish -= 10
-
-    confidence = min(max(50 + bullish, 10), 95)
-    if bullish > 25:
-        return "LONG 📈", confidence
-    elif bullish < -25:
-        return "SHORT 📉", 100 - confidence
+    # ── Sinyal Kararı ─────────────────────────────────────────────────
+    if score >= 65:
+        signal, action, emoji = "GÜÇLÜ ALIM", "AL 🚀", "🟢🟢"
+    elif score >= 40:
+        signal, action, emoji = "ALIM", "AL 📈", "🟢"
+    elif score >= 18:
+        signal, action, emoji = "HAFİF ALIM", "TEMKİNLİ AL ↗️", "🟡"
+    elif score <= -65:
+        signal, action, emoji = "GÜÇLÜ SATIM", "SAT 🔴", "🔴🔴"
+    elif score <= -40:
+        signal, action, emoji = "SATIM", "SAT 📉", "🔴"
+    elif score <= -18:
+        signal, action, emoji = "HAFİF SATIM", "TEMKİNLİ SAT ↘️", "🟡"
     else:
-        return "NÖTR ↔️", 50
+        signal, action, emoji = "NÖTR", "BEKLE ↔️", "⚪"
+
+    confidence = min(int(abs(score) * 1.1 + 35), 95)
+
+    return {
+        "score": score,
+        "signal": signal,
+        "action": action,
+        "emoji": emoji,
+        "confidence": confidence,
+        "bull_reasons": bull_reasons[:4],
+        "bear_reasons": bear_reasons[:3],
+    }
 
 
-async def _build_full_report(
-    macro: dict, analyses: list, task: str,
-    cg_data: dict | None = None, fg_data: dict | None = None
+# ─── Destek/Direnç + Giriş/Çıkış Seviyeleri ─────────────────────────────────
+
+def _calc_key_levels(
+    close, high, low, price: float, ema20: float, ema50: float,
+    ema200: float, bb_upper: float, bb_lower: float, atr: float, signal_score: int
+) -> dict:
+    """
+    Fibonacci, EMA ve psikolojik seviyelere dayalı destek/direnç hesaplama.
+    """
+    # Son 60 günlük swing high/low
+    n = min(len(close), 60)
+    recent_high = float(high.iloc[-n:].max())
+    recent_low = float(low.iloc[-n:].min())
+
+    # Fibonacci seviyeleri (son high→low)
+    fib_range = recent_high - recent_low
+    fibs = {
+        "0%": recent_low,
+        "23.6%": recent_low + fib_range * 0.236,
+        "38.2%": recent_low + fib_range * 0.382,
+        "50%": recent_low + fib_range * 0.500,
+        "61.8%": recent_low + fib_range * 0.618,
+        "78.6%": recent_low + fib_range * 0.786,
+        "100%": recent_high,
+    }
+
+    # Tüm aday seviyeleri topla
+    all_levels = list(fibs.values()) + [ema20, ema50, ema200, bb_upper, bb_lower]
+
+    # Psikolojik yuvarlak sayılar (BTC için $5k, diğerleri için %5 yuvarla)
+    if price > 10000:
+        step = 5000
+    elif price > 1000:
+        step = 500
+    elif price > 100:
+        step = 50
+    elif price > 10:
+        step = 5
+    else:
+        step = 0.5
+    psych = [round(price / step) * step * m for m in [0.85, 0.90, 0.95, 1.0, 1.05, 1.10, 1.15]]
+    all_levels += psych
+
+    # Destek: fiyatın altındaki seviyeler
+    supports = sorted([l for l in all_levels if l < price * 0.998 and l > price * 0.6], reverse=True)
+    # Direnç: fiyatın üstündeki seviyeler
+    resistances = sorted([l for l in all_levels if l > price * 1.002 and l < price * 1.5])
+
+    # Tekrarlı seviyeleri temizle (birbirine %1.5'ten yakın olanları birleştir)
+    def deduplicate(levels: list, pct_thresh=0.015) -> list:
+        if not levels:
+            return []
+        out = [levels[0]]
+        for lvl in levels[1:]:
+            if abs(lvl - out[-1]) / out[-1] > pct_thresh:
+                out.append(lvl)
+        return out
+
+    supports = deduplicate(supports)[:4]
+    resistances = deduplicate(resistances)[:4]
+
+    # Giriş/Stop-Loss/Hedef hesaplama
+    if signal_score > 0:  # Yükseliş sinyali
+        entry_low = max(supports[0], price - atr * 0.4) if supports else price - atr * 0.4
+        entry_high = price + atr * 0.2
+        stop_loss = (supports[1] - atr * 0.2) if len(supports) > 1 else (price - atr * 3.5)
+        stop_loss = max(stop_loss, price * 0.88)  # Max %12 SL
+        targets = resistances[:3] if resistances else [price * 1.08, price * 1.15, price * 1.22]
+    else:  # Düşüş sinyali
+        entry_low = price - atr * 0.2
+        entry_high = (resistances[0] + atr * 0.3) if resistances else price + atr * 0.5
+        stop_loss = (resistances[1] + atr * 0.2) if len(resistances) > 1 else price * 1.08
+        targets = supports[:3] if supports else [price * 0.92, price * 0.85, price * 0.78]
+
+    # Risk/Ödül
+    risk = abs(price - stop_loss)
+    reward = abs((targets[1] if len(targets) > 1 else targets[0]) - price)
+    rr = round(reward / risk, 2) if risk > 0 else 0
+
+    return {
+        "supports": supports,
+        "resistances": resistances,
+        "entry_low": entry_low,
+        "entry_high": entry_high,
+        "stop_loss": stop_loss,
+        "targets": targets,
+        "risk_reward": rr,
+        "sl_pct": round((price - stop_loss) / price * 100, 1) if signal_score > 0 else round((stop_loss - price) / price * 100, 1),
+        "atr": atr,
+        "period_high": recent_high,
+        "period_low": recent_low,
+    }
+
+
+# ─── Sembol Tam Analizi ───────────────────────────────────────────────────────
+
+async def _analyze_symbol_full(symbol: str, fg_value: float = 50, vix: float = 15) -> dict:
+    """
+    Günlük + 4H çoklu zaman çerçeveli tam teknik analiz.
+    """
+    import yfinance as yf
+    import pandas as pd
+
+    clean = symbol.replace("/", "-")
+    if clean.endswith("-USD-USD"):
+        clean = clean[:-4]
+
+    loop = asyncio.get_event_loop()
+    ticker = await loop.run_in_executor(None, lambda: yf.Ticker(clean))
+
+    # ── Günlük veri (90 gün) ──
+    hist_d = await loop.run_in_executor(None, lambda: ticker.history(period="90d"))
+    if hist_d.empty:
+        return {"symbol": symbol, "error": "Veri alınamadı"}
+
+    close_d = hist_d["Close"]
+    high_d = hist_d["High"]
+    low_d = hist_d["Low"]
+    vol_d = hist_d["Volume"]
+
+    # ── Günlük göstergeler ──
+    rsi_d = _calc_rsi(close_d)
+    ema20 = float(close_d.ewm(span=20).mean().iloc[-1])
+    ema50 = float(close_d.ewm(span=50).mean().iloc[-1]) if len(close_d) >= 50 else ema20
+    ema200 = float(close_d.ewm(span=200).mean().iloc[-1]) if len(close_d) >= 200 else ema50
+    macd_line, macd_sig, macd_hist = _calc_macd(close_d)
+    bb_upper, bb_mid, bb_lower = _calc_bollinger(close_d)
+    atr = _calc_atr(high_d, low_d, close_d)
+    stoch_k, stoch_d = _calc_stochastic(high_d, low_d, close_d)
+
+    current = float(close_d.iloc[-1])
+    prev = float(close_d.iloc[-2]) if len(close_d) > 1 else current
+    change_pct = (current - prev) / prev * 100
+    vol_avg = float(vol_d.mean())
+    vol_curr = float(vol_d.iloc[-1])
+    vol_ratio = vol_curr / vol_avg if vol_avg > 0 else 1.0
+
+    bb_pct = ((current - bb_lower) / (bb_upper - bb_lower) * 100) if (bb_upper - bb_lower) > 0 else 50
+
+    # ── 4H veri (son 30 gün, 1h'ten türetilir) ──
+    rsi_4h = rsi_d  # Fallback
+    try:
+        hist_1h = await loop.run_in_executor(
+            None, lambda: ticker.history(period="30d", interval="1h")
+        )
+        if not hist_1h.empty and len(hist_1h) > 20:
+            hist_4h = hist_1h.resample("4h").agg({
+                "Open": "first", "High": "max",
+                "Low": "min", "Close": "last", "Volume": "sum",
+            }).dropna()
+            if len(hist_4h) >= 14:
+                rsi_4h = _calc_rsi(hist_4h["Close"])
+                logger.debug(f"[QUANT 4H] {symbol} RSI 4H: {rsi_4h:.1f}")
+    except Exception as e:
+        logger.debug(f"[QUANT 4H] {symbol} 4H veri alınamadı: {e}")
+
+    # ── Sinyal motoru ──
+    sig = _generate_signal_v2(
+        rsi=rsi_d, ema20=ema20, ema50=ema50, ema200=ema200,
+        price=current, change_pct=change_pct, macd_hist=macd_hist,
+        vol_ratio=vol_ratio, bb_upper=bb_upper, bb_lower=bb_lower,
+        fg_value=fg_value, vix=vix, rsi_4h=rsi_4h, stoch_k=stoch_k,
+    )
+
+    # ── Destek/direnç ve giriş seviyeleri ──
+    levels = _calc_key_levels(
+        close=close_d, high=high_d, low=low_d, price=current,
+        ema20=ema20, ema50=ema50, ema200=ema200,
+        bb_upper=bb_upper, bb_lower=bb_lower,
+        atr=atr, signal_score=sig["score"],
+    )
+
+    return {
+        "symbol": symbol,
+        "price": current,
+        "change_pct": round(change_pct, 2),
+        "rsi_d": round(rsi_d, 1),
+        "rsi_4h": round(rsi_4h, 1),
+        "stoch_k": round(stoch_k, 1),
+        "ema20": round(ema20, 2),
+        "ema50": round(ema50, 2),
+        "ema200": round(ema200, 2),
+        "macd_hist": round(macd_hist, 2),
+        "bb_upper": round(bb_upper, 2),
+        "bb_lower": round(bb_lower, 2),
+        "bb_pct": round(bb_pct, 1),
+        "vol_ratio": round(vol_ratio, 2),
+        "atr": round(atr, 2),
+        "signal": sig,
+        "levels": levels,
+    }
+
+
+# ─── Raporlama ────────────────────────────────────────────────────────────────
+
+def _fmt_price(p: float) -> str:
+    """Fiyatı okunabilir biçimde formatlar. Bilimsel gösterim yok."""
+    if p >= 10000:
+        return f"${p:,.0f}"
+    elif p >= 100:
+        return f"${p:,.1f}"
+    elif p >= 1:
+        return f"${p:,.3f}"
+    else:
+        return f"${p:.6f}"
+
+
+def _fmt_pct(p: float, sign: bool = True) -> str:
+    prefix = "+" if sign and p > 0 else ""
+    return f"{prefix}{p:.1f}%"
+
+
+def _build_professional_report(
+    macro: dict, analyses: list, cg_data: dict,
+    fg_data: dict, task: str
 ) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    cg_data = cg_data or {}
-    fg_data = fg_data or {}
-
-    # Fear & Greed ikonu
     fg_val = fg_data.get("value", 0)
     fg_class = fg_data.get("classification", "")
-    if fg_val < 25:
-        fg_icon = "😱"
-    elif fg_val < 40:
-        fg_icon = "😨"
-    elif fg_val < 60:
-        fg_icon = "😐"
-    elif fg_val < 75:
-        fg_icon = "😊"
-    else:
-        fg_icon = "🤑"
 
-    # Gerçek BTC dominance (CoinGecko varsa onu kullan)
-    btc_dom_real = cg_data.get("btc_dominance", macro.get("BTC_DOM_APPROX", {}).get("price", 0))
+    fg_icon = (
+        "😱" if fg_val < 20 else
+        "😨" if fg_val < 35 else
+        "😐" if fg_val < 55 else
+        "😊" if fg_val < 70 else "🤑"
+    )
+
+    btc_dom = cg_data.get("btc_dominance", 0)
     eth_dom = cg_data.get("eth_dominance", 0)
     total_mc = cg_data.get("total_market_cap_b", 0)
     total_vol = cg_data.get("total_volume_b", 0)
 
     lines = [
-        "📊 *ORACLE QUANT RAPORU — TAM ANALİZ*",
+        "📊 *ORACLE QUANT — KURUMSAL ANALİZ*",
         f"🕐 {now}",
         "━━━━━━━━━━━━━━━━━━━━━━",
         "",
-        "🌍 *MAKRO GÖSTERGELER*",
+        "🌍 *MAKRO BAĞLAM*",
     ]
 
     macro_items = [
-        ("VIX", "😨 VIX", ""),
-        ("DXY", "💵 DXY", ""),
-        ("SP500", "📈 S&P500", ""),
-        ("GOLD", "🏅 Altın", "$"),
-        ("BTC", "₿ BTC", "$"),
-        ("ETH", "Ξ ETH", "$"),
+        ("VIX", "😨 VIX", False),
+        ("DXY", "💵 DXY", False),
+        ("SP500", "📈 S&P500", True),
+        ("GOLD", "🏅 Altın", True),
+        ("BTC", "₿ BTC", True),
+        ("ETH", "Ξ ETH", True),
     ]
-    for key, label, unit in macro_items:
+    for key, label, use_dollar in macro_items:
         d = macro.get(key, {})
-        price = d.get("price", 0)
-        chg = d.get("change_pct", 0)
-        icon = "↑" if chg > 0 else "↓"
-        lines.append(f"  {label}: {unit}{price:,.2f} {icon}{abs(chg):.1f}%")
+        p = d.get("price", 0)
+        c = d.get("change_pct", 0)
+        icon = "↑" if c > 0 else "↓"
+        pstr = f"${p:,.2f}" if use_dollar and p > 100 else f"{p:.2f}"
+        lines.append(f"  {label}: {pstr} {icon}{abs(c):.1f}%")
 
-    lines.append("")
-    lines.append("🔵 *KRİPTO PİYASASI*")
-    lines.append(f"  BTC Dominance: %{btc_dom_real:.1f} | ETH: %{eth_dom:.1f}")
+    lines += ["", "🔵 *KRİPTO PİYASASI*"]
+    lines.append(f"  BTC Dom: %{btc_dom:.1f} | ETH: %{eth_dom:.1f}")
     if total_mc > 0:
-        lines.append(f"  Toplam Market Cap: ${total_mc:.0f}B | Hacim: ${total_vol:.0f}B")
+        lines.append(f"  Total MC: ${total_mc:.0f}B | 24h Hacim: ${total_vol:.0f}B")
     if fg_val > 0:
-        lines.append(f"  {fg_icon} Korku & Açgözlülük: {fg_val}/100 ({fg_class})")
+        lines.append(f"  {fg_icon} Korku&Açgözlülük: {fg_val}/100 ({fg_class})")
 
-    lines.append("")
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("📉 *TEKNİK ANALİZ*")
+    # ── Makro Yorum ──
+    vix = macro.get("VIX", {}).get("price", 0)
+    sp_chg = macro.get("SP500", {}).get("change_pct", 0)
+    macro_comment = []
+    if vix < 20:
+        macro_comment.append("VIX<20 → Piyasa sakin, panik yok")
+    elif vix > 30:
+        macro_comment.append("⚠️ VIX>30 → Yüksek belirsizlik")
+    if sp_chg > 1:
+        macro_comment.append("S&P500 güçlü → risk iştahı yüksek")
+    if fg_val < 20:
+        macro_comment.append("Ekstrim korku = tarihsel alım fırsatı")
+    if macro_comment:
+        lines.append(f"  💡 {' | '.join(macro_comment)}")
+
+    lines += ["", "━━━━━━━━━━━━━━━━━━━━━━", "📉 *TEKNİK ANALİZ*"]
 
     for r in analyses:
         if "error" in r:
-            lines.append(f"\n❌ *{r['symbol']}*: {r['error']}")
+            lines.append(f"\n❌ {r['symbol']}: {r['error']}")
             continue
 
-        zone = r.get("zone", "🟡 NÖTR")
-        strength = r.get("zone_strength", "")
-        signal = r.get("signal", "NÖTR")
-        conf = r.get("confidence", 50)
-        sig_icon = "🟢" if "LONG" in signal else ("🔴" if "SHORT" in signal else "🟡")
+        sig = r["signal"]
+        lv = r["levels"]
+        price = r["price"]
+
+        sig_display = f"{sig['emoji']} *{sig['signal']}*"
+        conf = sig["confidence"]
 
         lines.append(f"""
-{sig_icon} *{r['symbol']}* — {r['price']:,.4g} ({r['change_pct']:+.1f}%)
-  📍 Bölge: {zone} ({strength})
-  📊 RSI: {r['rsi']} | BB%: {r['bb_pct']}%
-  📈 EMA20: {r['ema20']:,.4g} | EMA50: {r['ema50']:,.4g}
-  ⚡ MACD Hist: {r['macd_hist']:+.4f}
-  📦 Hacim: {r['vol_ratio']:.1f}x ort.
-  🎯 Sinyal: {signal} — Güven: %{conf}""")
+{sig['emoji']} *{r['symbol']}* — {_fmt_price(price)} ({_fmt_pct(r['change_pct'])})
+━━━━━━━━━━━━━━━━━━━━━━
+📊 *Göstergeler:*
+  RSI Günlük: {r['rsi_d']} | RSI 4H: {r['rsi_4h']}
+  Stochastic %K: {r['stoch_k']}
+  BB%: {r['bb_pct']:.0f} (alt: {_fmt_price(r['bb_lower'])} | üst: {_fmt_price(r['bb_upper'])})
+  EMA20: {_fmt_price(r['ema20'])} | EMA50: {_fmt_price(r['ema50'])} | EMA200: {_fmt_price(r['ema200'])}
+  MACD Hist: {r['macd_hist']:+.1f} | Hacim: {r['vol_ratio']:.1f}x ort.
 
-    vix = macro.get("VIX", {}).get("price", 0)
-    if vix > 30:
-        risk = "⚠️ VIX >30: Yüksek korku, volatilite artmış. Pozisyon küçültün."
-    elif vix > 20:
-        risk = "🟡 VIX 20-30: Orta volatilite. Dikkatli olun."
-    else:
-        risk = "🟢 VIX <20: Piyasa sakin. Risk iştahı normal."
+📍 *Bölge Analizi:*""")
 
-    lines.append("\n━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("🧠 *RİSK DEĞERLENDİRMESİ*")
-    lines.append(risk)
-    if fg_val > 0:
-        if fg_val < 25:
-            lines.append("😱 Aşırı Korku: Tarihsel olarak iyi alım fırsatı olabilir.")
-        elif fg_val > 75:
-            lines.append("🤑 Aşırı Açgözlülük: Dikkat — düzeltme riski yüksek.")
-    lines.append("\n⚠️ *Bu analiz yatırım tavsiyesi değildir.*")
-    lines.append("✅ Aksiyona geçmek için aşağıdaki butonu kullanın.")
+        if sig["bull_reasons"]:
+            for reason in sig["bull_reasons"]:
+                lines.append(f"  🟢 {reason}")
+        if sig["bear_reasons"]:
+            for reason in sig["bear_reasons"]:
+                lines.append(f"  🔴 {reason}")
+
+        lines.append(f"""
+🎯 *NİHAİ KARAR — {sig_display}*
+   Güven: %{conf} | Skor: {sig['score']:+d}/100
+
+📍 *Giriş Bölgesi:* {_fmt_price(lv['entry_low'])} — {_fmt_price(lv['entry_high'])}
+🛑 *Stop-Loss:* {_fmt_price(lv['stop_loss'])} (-%{lv['sl_pct']:.1f})""")
+
+        for i, t in enumerate(lv["targets"][:3], 1):
+            t_pct = (t - price) / price * 100
+            lines.append(f"🎯 *Hedef {i}:* {_fmt_price(t)} ({_fmt_pct(t_pct)})")
+
+        lines.append(f"📊 *Risk/Ödül (T2):* 1:{lv['risk_reward']:.2f}")
+
+        # Destek/Direnç seviyeleri
+        if lv["supports"]:
+            sup_str = " → ".join([_fmt_price(s) for s in lv["supports"][:3]])
+            lines.append(f"🔵 *Destek:* {sup_str}")
+        if lv["resistances"]:
+            res_str = " → ".join([_fmt_price(r2) for r2 in lv["resistances"][:3]])
+            lines.append(f"🔴 *Direnç:* {res_str}")
+
+        # Aksiyon özeti
+        action_lines = [
+            "",
+            f"⚡ *AKSIYON: {sig['action']}*",
+        ]
+        if sig["score"] >= 40:
+            action_lines += [
+                f"  → {_fmt_price(lv['entry_low'])} — {_fmt_price(lv['entry_high'])} arasında kademeli giriş",
+                f"  → SL: {_fmt_price(lv['stop_loss'])} (sabit tut, asla genişletme)",
+                f"  → T1 ({_fmt_price(lv['targets'][0])}) karı kilitle, kalana T2'yi hedefle",
+                f"  → Pozisyon büyüklüğü: Maks. %5 portföy riski",
+            ]
+        elif sig["score"] <= -40:
+            action_lines += [
+                f"  → Short veya nakde çekil",
+                f"  → SL: {_fmt_price(lv['stop_loss'])}",
+                f"  → Uzun pozisyon açmaktan kaçın",
+            ]
+        else:
+            action_lines += [
+                f"  → Net sinyal yok, kenar bekleniyor",
+                f"  → {_fmt_price(lv['supports'][0]) if lv['supports'] else '?'} destek kırarsa dikkat",
+            ]
+        lines.extend(action_lines)
+
+    # ── Genel Risk Notu ──
+    lines += [
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "⚠️ *Bu analiz yatırım tavsiyesi değildir.*",
+        "Oracle ASLA otomatik işlem açmaz.",
+    ]
 
     return "\n".join(lines)
 
 
+# ─── Zamanlanmış Tarama ───────────────────────────────────────────────────────
+
 async def run_scheduled_scan(send_alert_fn=None) -> str:
-    """Zamanlayıcı tarafından çağrılır. Kritik sinyal varsa alert gönderir."""
-    logger.info("[QUANT SCHEDULED] Running auto market scan")
+    logger.info("[QUANT SCHEDULED] Otomatik piyasa taraması")
+    watchlist = ["BTC-USD", "ETH-USD", "GC=F"]
 
-    watchlist = ["BTC-USD", "ETH-USD", "AAPL", "GC=F"]
     macro = await _fetch_macro_data()
-    alerts = []
+    fg_data = await _fetch_fear_greed()
+    fg_value = fg_data.get("value", 50)
+    vix = macro.get("VIX", {}).get("price", 15.0)
 
+    alerts = []
     for sym in watchlist:
         try:
-            a = await _analyze_symbol(sym)
-            if "TOPLAMA" in a.get("zone", "") and "GÜÇLÜ" in a.get("zone_strength", ""):
-                alerts.append(f"🟢 *{a['symbol']}* GÜÇLÜ TOPLAMA BÖLGESİNDE! RSI:{a['rsi']} Güven:%{a['confidence']}")
-            elif "DAĞITIM" in a.get("zone", "") and "GÜÇLÜ" in a.get("zone_strength", ""):
-                alerts.append(f"🔴 *{a['symbol']}* GÜÇLÜ DAĞITIM BÖLGESİNDE! RSI:{a['rsi']} Güven:%{a['confidence']}")
+            a = await _analyze_symbol_full(sym, fg_value=fg_value, vix=vix)
+            if "error" in a:
+                continue
+            sig = a["signal"]
+            lv = a["levels"]
+            if sig["score"] >= 60:
+                alerts.append(
+                    f"🚨 *{a['symbol']}* GÜÇLÜ ALIM!\n"
+                    f"RSI: {a['rsi_d']} | F&G: {fg_value} | Güven: %{sig['confidence']}\n"
+                    f"Giriş: {_fmt_price(lv['entry_low'])} — SL: {_fmt_price(lv['stop_loss'])}"
+                )
+            elif sig["score"] <= -60:
+                alerts.append(
+                    f"⚠️ *{a['symbol']}* GÜÇLÜ SATIM!\n"
+                    f"RSI: {a['rsi_d']} | F&G: {fg_value} | Güven: %{sig['confidence']}"
+                )
         except Exception as e:
-            logger.error(f"[QUANT SCHEDULED] {sym}: {e}")
+            logger.error(f"[QUANT SCAN] {sym}: {e}")
 
     if alerts and send_alert_fn:
-        alert_msg = "🚨 *ORACLE QUANT ALARMI*\n━━━━━━━━━━━━━━━━\n" + "\n".join(alerts)
-        await send_alert_fn(alert_msg)
-        return alert_msg
+        msg = "🔔 *ORACLE QUANT ALARMI*\n━━━━━━━━━━━━━━━━\n" + "\n\n".join(alerts)
+        await send_alert_fn(msg)
+        return msg
 
-    return "Scan OK — kritik sinyal yok"
+    return f"✅ Tarama OK — {len(watchlist)} sembol incelendi, kritik sinyal yok"
