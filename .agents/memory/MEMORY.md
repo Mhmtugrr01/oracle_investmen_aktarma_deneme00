@@ -1,0 +1,4 @@
+- [Groq LLM fallback](groq-llm-setup.md) — Groq ücretsiz LLM, GROQ_API_KEY ile aktif; OpenAI 429'da otomatik yedek
+- [LLM cache sistemi](llm-cache.md) — 5dk in-memory cache, tekrar eden sorularda LLM çağrısı yapmaz
+- [Scheduler cooldown](scheduler-cooldown.md) — Aynı varlık için 4 saatte bir alarm; aşırı bildirim önlendi
+- [CoinGecko + FearGreed](free-apis.md) — API key gerektirmeyen ücretsiz veri kaynakları entegre edildi

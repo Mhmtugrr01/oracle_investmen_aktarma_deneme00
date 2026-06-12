@@ -28,3 +28,4 @@ python-multipart==0.0.19
 apscheduler==3.10.4
 tenacity==9.0.0
 loguru==0.7.3
+groq>=0.9.0

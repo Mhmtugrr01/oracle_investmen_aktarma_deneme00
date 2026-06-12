@@ -25,7 +25,19 @@ async def run_quant_agent(task_description: str) -> str:
     symbols = await _extract_symbols(task_description)
     logger.info(f"[QUANT AGENT] Symbols: {symbols}")
 
-    macro = await _fetch_macro_data()
+    macro, cg_data, fg_data = await asyncio.gather(
+        _fetch_macro_data(),
+        _fetch_coingecko_data(),
+        _fetch_fear_greed(),
+        return_exceptions=True,
+    )
+    if isinstance(macro, Exception):
+        macro = {}
+    if isinstance(cg_data, Exception):
+        cg_data = {}
+    if isinstance(fg_data, Exception):
+        fg_data = {}
+
     analyses = []
     for sym in symbols[:5]:
         try:
@@ -35,8 +47,81 @@ async def run_quant_agent(task_description: str) -> str:
             logger.error(f"[QUANT] {sym} error: {e}")
             analyses.append({"symbol": sym, "error": str(e)})
 
-    report = await _build_full_report(macro, analyses, task_description)
+    report = await _build_full_report(macro, analyses, task_description, cg_data, fg_data)
     return report
+
+
+async def _extract_symbols(task: str) -> list[str]:
+    """Metinden analiz edilecek sembolleri çıkarır — LLM kullanmaz, kural tabanlı."""
+    task_upper = task.upper()
+    known_map = {
+        "BTC": "BTC-USD", "BITCOIN": "BTC-USD",
+        "ETH": "ETH-USD", "ETHEREUM": "ETH-USD",
+        "BNB": "BNB-USD", "SOL": "SOL-USD", "ADA": "ADA-USD",
+        "XRP": "XRP-USD", "DOGE": "DOGE-USD",
+        "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL",
+        "TSLA": "TSLA", "NVDA": "NVDA", "AMZN": "AMZN",
+        "GOLD": "GC=F", "ALTIN": "GC=F",
+        "SILVER": "SI=F", "OIL": "CL=F",
+        "SP500": "^GSPC", "NASDAQ": "^IXIC",
+    }
+
+    found = []
+    for keyword, ticker in known_map.items():
+        if keyword in task_upper and ticker not in found:
+            found.append(ticker)
+
+    if not found:
+        found = ["BTC-USD", "ETH-USD"]
+
+    return found[:5]
+
+
+async def _fetch_coingecko_data() -> dict:
+    """CoinGecko ücretsiz API — gerçek BTC dominance ve market cap."""
+    import aiohttp
+    result = {}
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = "https://api.coingecko.com/api/v3/global"
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    gd = data.get("data", {})
+                    btc_dom = gd.get("market_cap_percentage", {}).get("btc", 0)
+                    eth_dom = gd.get("market_cap_percentage", {}).get("eth", 0)
+                    total_mc = gd.get("total_market_cap", {}).get("usd", 0)
+                    total_vol = gd.get("total_volume", {}).get("usd", 0)
+                    result = {
+                        "btc_dominance": round(btc_dom, 2),
+                        "eth_dominance": round(eth_dom, 2),
+                        "total_market_cap_b": round(total_mc / 1e9, 1),
+                        "total_volume_b": round(total_vol / 1e9, 1),
+                    }
+                    logger.debug(f"[QUANT COINGECKO] BTC Dom: %{btc_dom:.1f}, Total: ${total_mc/1e9:.0f}B")
+    except Exception as e:
+        logger.warning(f"[QUANT COINGECKO] Failed: {e}")
+    return result
+
+
+async def _fetch_fear_greed() -> dict:
+    """Alternative.me Fear & Greed Index — ücretsiz, API key yok."""
+    import aiohttp
+    result = {}
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = "https://api.alternative.me/fng/?limit=1"
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=6)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    entry = data.get("data", [{}])[0]
+                    value = int(entry.get("value", 0))
+                    classification = entry.get("value_classification", "Nötr")
+                    result = {"value": value, "classification": classification}
+                    logger.debug(f"[QUANT F&G] {value} — {classification}")
+    except Exception as e:
+        logger.warning(f"[QUANT F&G] Failed: {e}")
+    return result
 
 
 async def _fetch_macro_data() -> dict:
@@ -289,31 +374,64 @@ def _generate_signal(rsi, ema20, ema50, price, change_pct, macd_hist, vol_ratio,
         return "NÖTR ↔️", 50
 
 
-async def _build_full_report(macro: dict, analyses: list, task: str) -> str:
+async def _build_full_report(
+    macro: dict, analyses: list, task: str,
+    cg_data: dict | None = None, fg_data: dict | None = None
+) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    cg_data = cg_data or {}
+    fg_data = fg_data or {}
+
+    # Fear & Greed ikonu
+    fg_val = fg_data.get("value", 0)
+    fg_class = fg_data.get("classification", "")
+    if fg_val < 25:
+        fg_icon = "😱"
+    elif fg_val < 40:
+        fg_icon = "😨"
+    elif fg_val < 60:
+        fg_icon = "😐"
+    elif fg_val < 75:
+        fg_icon = "😊"
+    else:
+        fg_icon = "🤑"
+
+    # Gerçek BTC dominance (CoinGecko varsa onu kullan)
+    btc_dom_real = cg_data.get("btc_dominance", macro.get("BTC_DOM_APPROX", {}).get("price", 0))
+    eth_dom = cg_data.get("eth_dominance", 0)
+    total_mc = cg_data.get("total_market_cap_b", 0)
+    total_vol = cg_data.get("total_volume_b", 0)
 
     lines = [
         "📊 *ORACLE QUANT RAPORU — TAM ANALİZ*",
-        f"🕐 {now} UTC",
+        f"🕐 {now}",
         "━━━━━━━━━━━━━━━━━━━━━━",
         "",
         "🌍 *MAKRO GÖSTERGELER*",
     ]
 
-    macro_map = {
-        "VIX": ("😨 VIX (Korku)", ""),
-        "DXY": ("💵 DXY", ""),
-        "SP500": ("📈 S&P500", ""),
-        "GOLD": ("🏅 Altın", "$"),
-        "BTC": ("₿ BTC", "$"),
-        "BTC_DOM_APPROX": ("🔵 BTC Dom ~", "%"),
-    }
-    for key, (label, unit) in macro_map.items():
+    macro_items = [
+        ("VIX", "😨 VIX", ""),
+        ("DXY", "💵 DXY", ""),
+        ("SP500", "📈 S&P500", ""),
+        ("GOLD", "🏅 Altın", "$"),
+        ("BTC", "₿ BTC", "$"),
+        ("ETH", "Ξ ETH", "$"),
+    ]
+    for key, label, unit in macro_items:
         d = macro.get(key, {})
         price = d.get("price", 0)
         chg = d.get("change_pct", 0)
-        chg_icon = "↑" if chg > 0 else "↓"
-        lines.append(f"  {label}: {unit}{price:,.2f} {chg_icon}{abs(chg):.1f}%")
+        icon = "↑" if chg > 0 else "↓"
+        lines.append(f"  {label}: {unit}{price:,.2f} {icon}{abs(chg):.1f}%")
+
+    lines.append("")
+    lines.append("🔵 *KRİPTO PİYASASI*")
+    lines.append(f"  BTC Dominance: %{btc_dom_real:.1f} | ETH: %{eth_dom:.1f}")
+    if total_mc > 0:
+        lines.append(f"  Toplam Market Cap: ${total_mc:.0f}B | Hacim: ${total_vol:.0f}B")
+    if fg_val > 0:
+        lines.append(f"  {fg_icon} Korku & Açgözlülük: {fg_val}/100 ({fg_class})")
 
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
@@ -334,22 +452,27 @@ async def _build_full_report(macro: dict, analyses: list, task: str) -> str:
 {sig_icon} *{r['symbol']}* — {r['price']:,.4g} ({r['change_pct']:+.1f}%)
   📍 Bölge: {zone} ({strength})
   📊 RSI: {r['rsi']} | BB%: {r['bb_pct']}%
-  📈 EMA: 20={r['ema20']:,.4g} | 50={r['ema50']:,.4g}
-  ⚡ MACD: {r['macd']:+.4f} | Hist: {r['macd_hist']:+.4f}
+  📈 EMA20: {r['ema20']:,.4g} | EMA50: {r['ema50']:,.4g}
+  ⚡ MACD Hist: {r['macd_hist']:+.4f}
   📦 Hacim: {r['vol_ratio']:.1f}x ort.
   🎯 Sinyal: {signal} — Güven: %{conf}""")
 
     vix = macro.get("VIX", {}).get("price", 0)
     if vix > 30:
-        risk_comment = "⚠️ VIX >30: Piyasada yüksek korku, volatilite artmış."
+        risk = "⚠️ VIX >30: Yüksek korku, volatilite artmış. Pozisyon küçültün."
     elif vix > 20:
-        risk_comment = "🟡 VIX 20-30: Orta volatilite, dikkatli olun."
+        risk = "🟡 VIX 20-30: Orta volatilite. Dikkatli olun."
     else:
-        risk_comment = "🟢 VIX <20: Piyasa sakin, düşük korku."
+        risk = "🟢 VIX <20: Piyasa sakin. Risk iştahı normal."
 
-    lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append(f"🧠 *RİSK YÖNETİMİ*")
-    lines.append(risk_comment)
+    lines.append("\n━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("🧠 *RİSK DEĞERLENDİRMESİ*")
+    lines.append(risk)
+    if fg_val > 0:
+        if fg_val < 25:
+            lines.append("😱 Aşırı Korku: Tarihsel olarak iyi alım fırsatı olabilir.")
+        elif fg_val > 75:
+            lines.append("🤑 Aşırı Açgözlülük: Dikkat — düzeltme riski yüksek.")
     lines.append("\n⚠️ *Bu analiz yatırım tavsiyesi değildir.*")
     lines.append("✅ Aksiyona geçmek için aşağıdaki butonu kullanın.")
 
