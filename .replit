@@ -50,3 +50,8 @@ externalPort = 80
 [nix]
 channel = "stable-25_05"
 packages = ["freetype", "glibcLocales", "libxcrypt"]
+
+[userenv]
+
+[userenv.shared]
+GEMINI_API_KEY = "AIzaSyBHyN2qM8kwNL7T5jNzQ3XqxYOh-YCwCzY"

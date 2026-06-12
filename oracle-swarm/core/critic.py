@@ -1,9 +1,9 @@
 """
-ORACLE CRITIC ENGINE — Çok Katmanlı AI Denetim Sistemi
-CEO, alt ajan çıktısını denetler, eksikleri tamamlar, nihai sonucu üretir.
+ORACLE CRITIC ENGINE — CEO Denetim Katmanı
+Alt ajan çıktısını denetler, gerekirse düzeltir.
+LLM yoksa ham sonucu doğrudan döndürür — asla bloklamaz.
 """
 from core.llm import llm_call
-from core.config import settings
 from loguru import logger
 
 
@@ -12,157 +12,111 @@ async def audit_and_refine(
     expanded_prompt: str,
     agent_name: str,
     raw_response: str,
-    max_rounds: int = 2,
+    max_rounds: int = 1,
 ) -> str:
     """
-    CEO Denetim Döngüsü:
-    1. Alt ajan çıktısını denetler
-    2. Eksik/yanıltıcı/hatalı yön varsa düzeltmek için alt ajana geri gönderir
-    3. max_rounds sonra nihai çıktıyı tamamlayıp döndürür
+    CEO Denetim Döngüsü.
+    Kısa veya LLM'siz durumlarda ham sonucu döner — güvenli.
     """
-    logger.info(f"[CRITIC] Auditing {agent_name} output ({len(raw_response)} chars)")
+    if not raw_response or len(raw_response) < 30:
+        return raw_response
 
-    current_response = raw_response
+    # Çok uzun yanıtları direkt onayla — LLM maliyeti vs. faydayı dengele
+    if len(raw_response) > 3000:
+        logger.debug(f"[CRITIC] Uzun yanıt ({len(raw_response)}c) — doğrudan onaylandı")
+        return raw_response
 
-    for round_num in range(1, max_rounds + 1):
+    logger.info(f"[CRITIC] Denetleniyor: {agent_name} ({len(raw_response)} chars)")
+
+    try:
         audit_result = await _audit_response(
             user_input=user_input,
-            expanded_prompt=expanded_prompt,
             agent_name=agent_name,
-            response=current_response,
+            response=raw_response,
         )
 
         if audit_result["verdict"] == "APPROVED":
-            logger.success(f"[CRITIC] Round {round_num}: APPROVED")
-            break
+            logger.debug(f"[CRITIC] ✅ Onaylandı (güven: {audit_result['confidence']})")
+            return raw_response
 
-        logger.warning(f"[CRITIC] Round {round_num}: NEEDS_REVISION — {audit_result['issues'][:100]}")
+        logger.info(f"[CRITIC] Revizyon gerekiyor: {audit_result['issues'][:80]}")
 
-        if round_num < max_rounds:
-            current_response = await _revise_response(
-                original_prompt=expanded_prompt,
-                previous_response=current_response,
+        if max_rounds >= 1:
+            revised = await _revise_response(
+                original_request=user_input,
+                previous_response=raw_response,
                 critic_notes=audit_result["issues"],
                 agent_name=agent_name,
             )
-        else:
-            current_response = await _finalize_response(
-                user_input=user_input,
-                previous_response=current_response,
-                critic_notes=audit_result["issues"],
-            )
+            return revised if revised and len(revised) > 20 else raw_response
 
-    return current_response
+    except Exception as e:
+        logger.warning(f"[CRITIC] Denetim hatası ({agent_name}): {e} — ham sonuç kullanılıyor")
+
+    return raw_response
 
 
-async def _audit_response(
-    user_input: str,
-    expanded_prompt: str,
-    agent_name: str,
-    response: str,
-) -> dict:
-    """CEO denetçisi olarak çıktıyı değerlendirir."""
+async def _audit_response(user_input: str, agent_name: str, response: str) -> dict:
+    audit_prompt = f"""Kullanıcı istedi: {user_input[:150]}
 
-    audit_prompt = f"""
-Sen Oracle CEO Denetçisisin. Bir alt ajan ({agent_name}) şu çıktıyı üretti:
+{agent_name} ajanı şunu üretti:
+{response[:1000]}
 
-KULLANICI İSTEĞİ: {user_input[:200]}
-
-ALT AJAN ÇIKTISI:
-{response[:2000]}
-
-Bu çıktıyı şu kriterlere göre denetle:
-1. Eksik bilgi var mı?
-2. Yanıltıcı veya hatalı ifade var mı?
-3. Kullanıcının asıl isteğini tam karşılıyor mu?
-4. Somut/uygulanabilir mi yoksa belirsiz mi?
-
-Yanıtın SADECE şu formatta olsun:
+Tek satırda değerlendir:
 VERDICT: APPROVED veya NEEDS_REVISION
-ISSUES: [Eğer NEEDS_REVISION ise eksiklikleri listele. APPROVED ise boş bırak.]
-CONFIDENCE: [1-100 arası puan]
-"""
+ISSUES: (sadece NEEDS_REVISION ise, eksikler)
+CONFIDENCE: (1-100)"""
 
     result = await llm_call(
         messages=[{"role": "user", "content": audit_prompt}],
-        system="Sen titiz bir kalite denetçisisin. Kısa ve net değerlendir.",
+        system="Kalite denetçisisin. Kısa değerlendir.",
         temperature=0.1,
-        max_tokens=500,
+        max_tokens=150,
     )
+
+    if not result:
+        return {"verdict": "APPROVED", "issues": "", "confidence": 75}
 
     verdict = "APPROVED"
     issues = ""
-    confidence = 80
+    confidence = 75
 
     for line in result.split("\n"):
+        line = line.strip()
         if line.startswith("VERDICT:"):
-            v = line.replace("VERDICT:", "").strip()
-            if "NEEDS" in v.upper():
+            if "NEEDS" in line.upper():
                 verdict = "NEEDS_REVISION"
         elif line.startswith("ISSUES:"):
             issues = line.replace("ISSUES:", "").strip()
         elif line.startswith("CONFIDENCE:"):
             try:
-                confidence = int(line.replace("CONFIDENCE:", "").strip())
+                confidence = int("".join(filter(str.isdigit, line.split(":")[-1])))
             except Exception:
-                confidence = 75
+                pass
 
     return {"verdict": verdict, "issues": issues, "confidence": confidence}
 
 
 async def _revise_response(
-    original_prompt: str,
+    original_request: str,
     previous_response: str,
     critic_notes: str,
     agent_name: str,
 ) -> str:
-    """Alt ajanı revizyon için tekrar çalıştırır."""
+    revise_prompt = f"""İstek: {original_request[:150]}
 
-    revise_prompt = f"""
-Aşağıdaki yanıtı denetçi geri bildirimine göre geliştirilmiş şekilde yeniden yaz:
-
-ORIJINAL GÖREV: {original_prompt[:500]}
-
-ÖNCEKİ YANIT:
+Önceki yanıt:
 {previous_response[:1500]}
 
-DENETÇİ NOTLARI (bunları mutlaka düzelt):
-{critic_notes}
+Eksikler: {critic_notes}
 
-Daha eksiksiz, daha doğru ve daha uygulanabilir bir yanıt üret. Türkçe.
-"""
+Eksikleri gidererek daha iyi yanıt üret. Türkçe."""
 
-    return await llm_call(
+    result = await llm_call(
         messages=[{"role": "user", "content": revise_prompt}],
-        system=f"Sen {agent_name} ajanısın. Denetçi geri bildirimini dikkate alarak daha iyi bir yanıt üret.",
-        model=settings.llm_model_heavy,
-        max_tokens=6000,
+        system=f"Sen {agent_name} ajanısın. Denetçi geri bildirimini dikkate al.",
+        max_tokens=4000,
+        temperature=0.6,
     )
 
-
-async def _finalize_response(
-    user_input: str,
-    previous_response: str,
-    critic_notes: str,
-) -> str:
-    """CEO son turu kendisi tamamlar."""
-
-    final_prompt = f"""
-Kullanıcı istedi: {user_input[:200]}
-
-Mevcut yanıt:
-{previous_response[:2000]}
-
-Eksik kalan noktalar:
-{critic_notes}
-
-Bu eksiklikleri kendin tamamla ve nihai, eksiksiz, kullanıcıya hazır yanıtı üret.
-Yanıtın başına "✅ CEO Onaylı — " ekle.
-"""
-
-    return await llm_call(
-        messages=[{"role": "user", "content": final_prompt}],
-        system="Sen Oracle CEO'sun. Son denetimi geçemeyen yanıtı kendin tamamlayıp mükemmelleştir. Türkçe, net, somut.",
-        model=settings.llm_model_heavy,
-        max_tokens=6000,
-    )
+    return result or previous_response

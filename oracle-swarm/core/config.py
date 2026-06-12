@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     openai_base_url: str = os.getenv("AI_INTEGRATIONS_OPENAI_BASE_URL", "https://api.openai.com/v1")
     openai_api_key: str = os.getenv("AI_INTEGRATIONS_OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
 
+    # Gemini — ücretsiz LLM (aistudio.google.com)
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+
     # Groq — ücretsiz LLM (console.groq.com)
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     groq_model: str = "llama-3.3-70b-versatile"
