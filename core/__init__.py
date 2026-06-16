@@ -1,0 +1,1 @@
+"""PROJECT OLYMPUS — core modülü."""

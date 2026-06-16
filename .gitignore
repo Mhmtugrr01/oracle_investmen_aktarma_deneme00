@@ -47,3 +47,10 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Python — PROJECT OLYMPUS
+__pycache__/
+*.py[cod]
+.env
+.venv/
+venv/
