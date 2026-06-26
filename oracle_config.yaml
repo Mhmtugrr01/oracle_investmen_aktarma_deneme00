@@ -1,0 +1,111 @@
+analysis:
+  weights:
+    macro: 0.10
+    quant: 0.40
+    whale: 0.15
+    fundamental: 0.25
+    sentiment: 0.10
+
+risk:
+  kelly:
+    max_fraction: 0.25
+    min_fraction: 0.01
+  min_risk_reward_ratio: 3.0   # ESKİ: 2.5 → YENİ: 3.0
+  atr:
+    stop_loss_multiplier: 2.0
+    take_profit_multiplier: 2.0
+
+ceo:
+  max_score_spread: 0.70
+  long_threshold: 0.15
+  short_threshold: -0.15
+  min_composite_score: 0.52
+  confidence_threshold: 0.50
+  confidence_boost: 0.25
+  max_retries: 3
+
+red_team:
+  black_swan_spread: 1.20
+  min_llm_confidence: 0.55
+  fail_on_fatal: true
+
+quant:
+  timeframe: "4h"
+  ohlcv_limit: 200
+  rsi_period: 14
+  ma_fast_period: 9
+  ma_slow_period: 21
+  fib_lookback_bars: 60
+  atr_period: 14
+  fib_proximity_threshold_pct: 1.5
+  score:
+    rsi_oversold_bonus: 12.0
+    rsi_overbought_penalty: 12.0
+    rsi_bullish_zone_bonus: 5.0
+    rsi_bearish_zone_penalty: 5.0
+    cross_golden_bonus: 18.0
+    cross_bullish_bonus: 8.0
+    cross_bearish_penalty: 8.0
+    cross_death_penalty: 18.0
+    divergence_bullish_bonus: 14.0
+    divergence_bearish_penalty: 14.0
+    fib_proximity_bonus: 8.0
+    atr_rr_bonus: 6.0
+    atr_rr_penalty: 6.0
+    atr_rr_high_threshold: 2.0
+    atr_rr_low_threshold: 1.0
+
+whale:
+  timeframe: "1h"
+  ohlcv_limit: 240
+  sweep_lookback_bars: 36
+  cvd_lookback_bars: 48
+  wick_ratio_threshold: 0.55
+  body_ratio_threshold: 0.25
+  rr_target_multiplier: 2.2
+
+llm:
+  model: "openai/gpt-4.1-mini"
+  temperature: 0.0
+  timeout_seconds: 25
+  max_retries: 3
+  base_url_env: "OPENROUTER_BASE_URL"
+  api_key_env: "OPENROUTER_API_KEY"
+
+asset_universe:
+  crypto:
+    - "BTC/USDT"
+    - "ETH/USDT"
+    - "INJ/USDT"
+    - "RNDR/USDT"
+    - "FET/USDT"
+  us_stocks:
+    - "NVDA"
+    - "TSLA"
+    - "MSTR"
+    - "COIN"
+    - "INTC"
+    - "AMD"
+    - "AMAT"
+    - "SPY"
+  bist:
+    - "ASTOR.IS"
+    - "EUPWR.IS"
+    - "THYAO.IS"
+    - "GARAN.IS"
+    - "EREGL.IS"
+  commodities:
+    - "GC=F"
+    - "SI=F"
+    - "CL=F"
+
+scan_schedule:
+  full_scan_interval_hours: 4
+  watchlist_check_interval_min: 15
+  daily_briefing_hour: 8
+
+higher_timeframe_filter:
+  enabled: true
+  block_long_if_weekly_bearish: true
+  downgrade_long_if_daily_bearish: true
+  require_full_alignment_for_strong_buy: true

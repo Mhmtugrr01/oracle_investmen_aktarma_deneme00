@@ -1,0 +1,12 @@
+{
+  "weights": {
+    "macro": 0.0,
+    "quant": 0.05,
+    "fundamental": 0.95,
+    "sentiment": 0.0
+  },
+  "train_ic_spearman": 0.06467922395855952,
+  "test_ic_spearman": 0.18688373436925382,
+  "train_rows": 3120,
+  "test_rows": 1540
+}

@@ -16,13 +16,21 @@ from agents.red_team import run_red_team
 from agents.sentiment_reader import run_sentiment_reader
 from agents.the_oracle import run_the_oracle
 from agents.whale_hunter import run_whale_hunter
+from core.config import get_oracle_config_cached
 from core.console import system_print
 from core.types import OracleState, PipelineStatus
 
-MAX_CEO_RETRIES = 3
-
-RouteAfterCeo = Literal["revise", "red_team", "end_failed"]
+RouteAfterCeo = Literal["revise", "red_team", "end_failed", "end_aborted", "end_low_score"]
 RouteAfterRedTeam = Literal["end_aborted", "end_completed"]
+RouteAfterMacro = Literal["next", "end_aborted"]
+RouteAfterQuant = Literal["next", "end_aborted"]
+RouteAfterWhale = Literal["next", "end_aborted"]
+RouteAfterFundamental = Literal["next", "end_aborted"]
+RouteAfterSentiment = Literal["next", "end_aborted"]
+
+
+def _max_ceo_retries() -> int:
+    return get_oracle_config_cached().ceo.max_retries
 
 
 def _diff_state(before: OracleState, after: OracleState) -> dict[str, Any]:
@@ -72,14 +80,41 @@ async def red_team_node(state: OracleState) -> dict[str, Any]:
     return await _wrap(run_red_team, state)
 
 
+def route_after_macro(state: OracleState) -> RouteAfterMacro:
+    return "end_aborted" if state.fatal_error else "next"
+
+
+def route_after_quant(state: OracleState) -> RouteAfterQuant:
+    return "end_aborted" if state.fatal_error else "next"
+
+
+def route_after_whale(state: OracleState) -> RouteAfterWhale:
+    return "end_aborted" if state.fatal_error else "next"
+
+
+def route_after_fundamental(state: OracleState) -> RouteAfterFundamental:
+    return "end_aborted" if state.fatal_error else "next"
+
+
+def route_after_sentiment(state: OracleState) -> RouteAfterSentiment:
+    return "end_aborted" if state.fatal_error else "next"
+
+
 async def end_failed_node(state: OracleState) -> dict[str, Any]:
+    max_retries = _max_ceo_retries()
     system_print(
-        f"Pipeline iptal — CEO rötuş limiti ({MAX_CEO_RETRIES}) aşıldı.",
+        f"Pipeline iptal — CEO rötuş limiti ({max_retries}) aşıldı.",
         "\033[91m",
     )
     failed = state.mark_failed(
-        f"CEO denetimi {MAX_CEO_RETRIES} denemede tutarlılık sağlanamadı."
+        f"CEO denetimi {max_retries} denemede tutarlılık sağlanamadı."
     )
+    # EKLENDI: sinyal etiketini temizle
+    failed = failed.model_copy(update={
+        "signal_label": None,
+        "signal_direction": None,
+        "ceo_approved": False,
+    })
     return _diff_state(state, failed)
 
 
@@ -90,19 +125,39 @@ async def end_completed_node(state: OracleState) -> dict[str, Any]:
 
 
 async def end_aborted_node(state: OracleState) -> dict[str, Any]:
-    system_print(f"Pipeline İPTAL — Red Team: {state.fatal_error}", "\033[91m")
+    system_print(f"Pipeline İPTAL — {state.fatal_error}", "\033[91m")
     aborted = state.model_copy(
         update={"status": PipelineStatus.ABORTED, "current_node": state.current_node}
     )
     return _diff_state(state, aborted)
 
 
+async def end_low_score_node(state: OracleState) -> dict[str, Any]:
+    reason = "KOMPOZİT SKOR YETERSİZ — İŞLEM YAPILMADI"
+    system_print(reason, "\033[93m")
+    aborted = state.model_copy(
+        update={
+            "status": PipelineStatus.ABORTED,
+            "fatal_error": reason,
+            "signal_label": None,       # EKLENDI: hayalet sinyal temizle
+            "signal_direction": None,   # EKLENDI
+            "ceo_approved": False,      # EKLENDI
+            "messages": [f"[SYSTEM] {reason}"],
+        }
+    )
+    return _diff_state(state, aborted)
+
+
 def route_after_ceo(state: OracleState) -> RouteAfterCeo:
+    conf = get_oracle_config_cached()
+    max_retries = _max_ceo_retries()
     if state.fatal_error:
-        return "end_failed"
+        return "end_aborted"
+    if state.composite_score < conf.ceo.min_composite_score or state.confidence < conf.ceo.confidence_threshold:
+        return "end_low_score"
     if state.ceo_approved:
         return "red_team"
-    if state.retry_count >= MAX_CEO_RETRIES:
+    if state.retry_count >= max_retries:
         return "end_failed"
     return "revise"
 
@@ -126,13 +181,54 @@ def build_oracle_graph() -> StateGraph:
     graph.add_node("end_failed", end_failed_node)
     graph.add_node("end_completed", end_completed_node)
     graph.add_node("end_aborted", end_aborted_node)
+    graph.add_node("end_low_score", end_low_score_node)
 
     graph.add_edge(START, "macro_sentinel")
-    graph.add_edge("macro_sentinel", "quant_engine")
-    graph.add_edge("quant_engine", "whale_hunter")
-    graph.add_edge("whale_hunter", "fundamental_filter")
-    graph.add_edge("fundamental_filter", "sentiment_reader")
-    graph.add_edge("sentiment_reader", "the_oracle")
+
+    graph.add_conditional_edges(
+        "macro_sentinel",
+        route_after_macro,
+        {
+            "next": "quant_engine",
+            "end_aborted": "end_aborted",
+        },
+    )
+
+    graph.add_conditional_edges(
+        "quant_engine",
+        route_after_quant,
+        {
+            "next": "whale_hunter",
+            "end_aborted": "end_aborted",
+        },
+    )
+
+    graph.add_conditional_edges(
+        "whale_hunter",
+        route_after_whale,
+        {
+            "next": "fundamental_filter",
+            "end_aborted": "end_aborted",
+        },
+    )
+
+    graph.add_conditional_edges(
+        "fundamental_filter",
+        route_after_fundamental,
+        {
+            "next": "sentiment_reader",
+            "end_aborted": "end_aborted",
+        },
+    )
+
+    graph.add_conditional_edges(
+        "sentiment_reader",
+        route_after_sentiment,
+        {
+            "next": "the_oracle",
+            "end_aborted": "end_aborted",
+        },
+    )
 
     graph.add_conditional_edges(
         "the_oracle",
@@ -141,6 +237,8 @@ def build_oracle_graph() -> StateGraph:
             "revise": "macro_sentinel",
             "red_team": "red_team",
             "end_failed": "end_failed",
+            "end_aborted": "end_aborted",
+            "end_low_score": "end_low_score",
         },
     )
 
@@ -156,6 +254,7 @@ def build_oracle_graph() -> StateGraph:
     graph.add_edge("end_failed", END)
     graph.add_edge("end_completed", END)
     graph.add_edge("end_aborted", END)
+    graph.add_edge("end_low_score", END)
 
     return graph
 

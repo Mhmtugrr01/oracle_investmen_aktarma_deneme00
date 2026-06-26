@@ -13,6 +13,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
+from core.config import get_oracle_config_cached
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -46,6 +48,18 @@ class SignalDirection(str, Enum):
     NO_TRADE = "no_trade"
 
 
+VALID_SIGNALS = [
+    "STRONG_BUY",
+    "ACCUMULATE",
+    "HOLD",
+    "REDUCE",
+    "STRONG_SELL",
+    "SHORT",
+    "WATCH",
+    "AVOID",
+]
+
+
 def _merge_messages(existing: list[str], new: list[str]) -> list[str]:
     return existing + new
 
@@ -71,7 +85,7 @@ class OracleState(BaseModel):
     # ── Ajan skorları (−1.0 … +1.0) ──────────────────────────────────
     macro_score: float = Field(default=0.0, ge=-1.0, le=1.0)
     quant_score: float = Field(default=0.0, ge=-1.0, le=1.0)
-    whale_score: float = Field(default=0.0, ge=-1.0, le=1.0)
+    whale_score: Optional[float] = Field(default=None, ge=-1.0, le=1.0)
     fundamental_score: float = Field(default=0.0, ge=-1.0, le=1.0)
     sentiment_score: float = Field(default=0.0, ge=-1.0, le=1.0)
 
@@ -82,12 +96,39 @@ class OracleState(BaseModel):
 
     # ── Alpha çıktısı ────────────────────────────────────────────────
     signal_direction: SignalDirection = SignalDirection.NEUTRAL
+    signal_label: Optional[str] = None
     alpha_signal: Optional[str] = None
+    base_rr: Optional[float] = Field(default=None, ge=0.0)
     risk_reward_ratio: Optional[float] = Field(default=None, ge=0.0)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    entry_zone_low: Optional[float] = Field(default=None)
+    entry_zone_high: Optional[float] = Field(default=None)
     entry_price: Optional[float] = Field(default=None, ge=0.0)
     stop_loss: Optional[float] = Field(default=None, ge=0.0)
     take_profit: Optional[float] = Field(default=None, ge=0.0)
+    t1: Optional[float] = Field(default=None)
+    t1_rr: Optional[float] = Field(default=None)
+    t2: Optional[float] = Field(default=None)
+    t2_rr: Optional[float] = Field(default=None)
+    t3: Optional[float] = Field(default=None)
+    t3_rr: Optional[float] = Field(default=None)
+    invalidation_level: Optional[float] = Field(default=None)
+    trade_type: Optional[str] = Field(default=None)
+    timeframe_alignment_score: Optional[float] = Field(default=None)
+    timeframe_biases: Optional[dict] = Field(default=None)
+    divergence_daily: Optional[str] = Field(default=None)
+    divergence_weekly: Optional[str] = Field(default=None)
+    cross_asset_score: Optional[float] = Field(default=None)
+    cross_asset_warnings: Optional[list] = Field(default_factory=list)
+    historical_pattern: Optional[str] = Field(default=None)
+    pattern_outcome_bias: Optional[str] = Field(default=None)
+    historical_similarity_score: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    fundamental_data_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    news_article_count: Optional[int] = Field(default=None, ge=0)
+    news_sentiment: Optional[float] = Field(default=None, ge=-1.0, le=1.0)
+    fear_greed_value: Optional[int] = Field(default=None)
+    consensus_variance: Optional[float] = Field(default=None, ge=0.0)
+    ma_fallback_used: Optional[bool] = Field(default=None)
 
     # ── Denetim izi ──────────────────────────────────────────────────
     messages: Annotated[list[str], _merge_messages] = Field(default_factory=list)
@@ -138,20 +179,30 @@ class OracleState(BaseModel):
 
     @property
     def composite_score(self) -> float:
-        weights = {
-            "macro": 0.20,
-            "quant": 0.25,
-            "whale": 0.15,
-            "fundamental": 0.20,
-            "sentiment": 0.20,
-        }
-        return (
-            self.macro_score * weights["macro"]
-            + self.quant_score * weights["quant"]
-            + self.whale_score * weights["whale"]
-            + self.fundamental_score * weights["fundamental"]
-            + self.sentiment_score * weights["sentiment"]
+        def _to_unit(value: Optional[float]) -> float:
+            if value is None:
+                return 0.0
+            clipped = max(-1.0, min(1.0, float(value)))
+            return (clipped + 1.0) / 2.0
+
+        macro_component = _to_unit(self.macro_score)
+        if "/" in self.symbol and self.cross_asset_score is not None:
+            cross_unit = max(0.0, min(100.0, float(self.cross_asset_score))) / 100.0
+            macro_component = macro_component * 0.5 + cross_unit * 0.5
+
+        score = (
+            macro_component * 0.25
+            + _to_unit(self.whale_score) * 0.20
+            + _to_unit(self.quant_score) * 0.25
+            + _to_unit(self.fundamental_score) * 0.15
+            + max(0.0, min(1.0, float(self.timeframe_alignment_score or 0.0))) * 0.10
+            + _to_unit(self.sentiment_score) * 0.05
         )
+        if self.divergence_daily == "POSITIVE_DIVERGENCE":
+            score += 0.05
+        elif self.divergence_daily == "NEGATIVE_DIVERGENCE":
+            score -= 0.05
+        return round(max(0.0, min(1.0, score)), 4)
 
     @property
     def is_halted(self) -> bool:
@@ -176,10 +227,39 @@ class OracleStateUpdate(BaseModel):
     red_team_passed: Optional[bool] = None
     red_team_objections: Optional[list[str]] = None
     signal_direction: Optional[SignalDirection] = None
+    signal_label: Optional[str] = None
     alpha_signal: Optional[str] = None
+    base_rr: Optional[float] = Field(default=None, ge=0.0)
     risk_reward_ratio: Optional[float] = Field(default=None, ge=0.0)
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    entry_zone_low: Optional[float] = None
+    entry_zone_high: Optional[float] = None
     entry_price: Optional[float] = Field(default=None, ge=0.0)
     stop_loss: Optional[float] = Field(default=None, ge=0.0)
     take_profit: Optional[float] = Field(default=None, ge=0.0)
+    t1: Optional[float] = None
+    t1_rr: Optional[float] = None
+    t2: Optional[float] = None
+    t2_rr: Optional[float] = None
+    t3: Optional[float] = None
+    t3_rr: Optional[float] = None
+    invalidation_level: Optional[float] = None
+    trade_type: Optional[str] = None
+    timeframe_alignment_score: Optional[float] = None
+    timeframe_biases: Optional[dict] = None
+    divergence_daily: Optional[str] = None
+    divergence_weekly: Optional[str] = None
+    cross_asset_score: Optional[float] = None
+    cross_asset_warnings: Optional[list] = None
+    historical_pattern: Optional[str] = None
+    pattern_outcome_bias: Optional[str] = Field(default=None)
+    historical_similarity_score: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    fundamental_data_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    news_article_count: Optional[int] = Field(default=None, ge=0)
+    news_sentiment: Optional[float] = Field(default=None, ge=-1.0, le=1.0)
+    fear_greed_value: Optional[int] = None
+    consensus_variance: Optional[float] = Field(default=None, ge=0.0)
+    ma_fallback_used: Optional[bool] = None
+    oracle_summary: Optional[str] = None
     messages: Optional[list[str]] = None
+

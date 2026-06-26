@@ -1,65 +1,63 @@
-"""
-PROJECT OLYMPUS — The Oracle
-FAZ 2: LangGraph Brain Orchestration test ateşleyicisi.
-"""
-
 from __future__ import annotations
 
+# SSL — kurumsal ağ sertifika enjeksiyonu (from __future__ sonrası, diğer importlardan önce)
+try:
+    import truststore
+
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+
+"""PROJECT OLYMPUS — Production entrypoint (Telegram long-polling)."""
+
 import asyncio
+import os
 import sys
 
 from dotenv import load_dotenv
 from loguru import logger
 
-from core.console import BOLD, CYAN, RESET, system_print
-from core.graph import compile_oracle_graph
-from core.types import OracleState, PipelineStatus
-
-
-async def run_pipeline_simulation() -> OracleState:
-    system_print("=" * 60, CYAN)
-    system_print("PROJECT OLYMPUS - LangGraph Pipeline Simulasyonu", CYAN)
-    system_print("=" * 60, CYAN)
-
-    query = "Kullanici $FET icin tarama istiyor"
-    initial_state = OracleState(
-        query=query,
-        symbol="FET/USDT",
-        user_id="demo_user_001",
-        chat_id=999001,
-    )
-
-    system_print(f"Kullanici girdisi: '{query}'", CYAN)
-    system_print(f"Hedef sembol: {initial_state.symbol}", CYAN)
-    system_print(f"Session: {initial_state.session_id}", CYAN)
-    print(f"\n{BOLD}{CYAN}>> LangGraph compile & ainvoke basliyor...{RESET}\n", flush=True)
-
-    graph = compile_oracle_graph()
-    raw_result = await graph.ainvoke(initial_state)
-
-    if isinstance(raw_result, OracleState):
-        final_state = raw_result
-    else:
-        final_state = OracleState.model_validate(raw_result)
-
-    print(f"\n{BOLD}{CYAN}>> Pipeline tamamlandi.{RESET}\n", flush=True)
-    system_print(f"Durum       : {final_state.status.value}", CYAN)
-    system_print(f"Retry       : {final_state.retry_count}/3", CYAN)
-    system_print(f"CEO Onay    : {final_state.ceo_approved}", CYAN)
-    system_print(f"Red Team    : {final_state.red_team_verdict or '-'}", CYAN)
-    system_print(f"Alpha       : {final_state.alpha_signal or '-'}", CYAN)
-    system_print(f"R:R         : {final_state.risk_reward_ratio or '-'}", CYAN)
-    system_print(f"Fatal Error : {final_state.fatal_error or '-'}", CYAN)
-    system_print(f"Mesaj sayisi: {len(final_state.messages)}", CYAN)
-    system_print("=" * 60, CYAN)
-
-    return final_state
+from bot.telegram_handler import create_handler
+from core.config import load_oracle_config
+from core.console import system_print
+from core.scanner import OracleScanner
 
 
 async def bootstrap() -> None:
     load_dotenv()
     logger.remove()
-    await run_pipeline_simulation()
+    logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
+    config = await load_oracle_config()
+    handler = create_handler()
+    await handler.start()
+
+    allowed_raw = os.getenv("ALLOWED_USER_ID", "").strip()
+    allowed_chat_id = int(allowed_raw) if allowed_raw else None
+
+    async def send_telegram_message(message: str) -> None:
+        if allowed_chat_id is None:
+            logger.warning("Scanner mesajı için ALLOWED_USER_ID tanımlı değil.")
+            return
+        assert handler._app is not None
+        await handler._app.bot.send_message(chat_id=allowed_chat_id, text=message)
+
+    async def run_pipeline(symbol: str):
+        return await handler._run_pipeline(
+            symbol=symbol,
+            user_id="scanner",
+            chat_id=allowed_chat_id or 0,
+            query=f"/scan {symbol}",
+        )
+
+    scanner = OracleScanner(
+        pipeline_runner=run_pipeline,
+        telegram_bot=send_telegram_message,
+        config=config.model_dump(),
+    )
+    asyncio.create_task(scanner.start())
+
+    system_print("Telegram long-polling aktif. Bot calisiyor.")
+    await asyncio.Event().wait()
 
 
 def main() -> None:

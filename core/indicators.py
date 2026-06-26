@@ -242,6 +242,8 @@ def build_quant_score(
     divergence: dict[str, Any],
     fib_proximity_pct: float,
     atr_rr: float,
+    score_params: dict[str, float],
+    fib_proximity_threshold_pct: float,
 ) -> tuple[float, list[str]]:
     """
     0-100 arasi teknik skor uretir.
@@ -251,42 +253,42 @@ def build_quant_score(
     notes: list[str] = []
 
     if rsi["oversold"]:
-        score += 12
+        score += score_params["rsi_oversold_bonus"]
         notes.append(f"RSI oversold ({rsi['rsi']})")
     elif rsi["overbought"]:
-        score -= 12
+        score -= score_params["rsi_overbought_penalty"]
         notes.append(f"RSI overbought ({rsi['rsi']})")
     elif rsi["zone"] == "bullish":
-        score += 5
+        score += score_params["rsi_bullish_zone_bonus"]
     elif rsi["zone"] == "bearish":
-        score -= 5
+        score -= score_params["rsi_bearish_zone_penalty"]
 
     cross_map = {
-        "golden_cross": 18,
-        "bullish": 8,
-        "bearish": -8,
-        "death_cross": -18,
+        "golden_cross": score_params["cross_golden_bonus"],
+        "bullish": score_params["cross_bullish_bonus"],
+        "bearish": -score_params["cross_bearish_penalty"],
+        "death_cross": -score_params["cross_death_penalty"],
     }
-    delta = cross_map.get(cross["signal"], 0)
+    delta = float(cross_map.get(cross["signal"], 0.0))
     score += delta
-    notes.append(f"{cross['type']} {cross['signal']} ({delta:+d})")
+    notes.append(f"{cross['type']} {cross['signal']} ({delta:+.1f})")
 
     if divergence["bullish"]:
-        score += 14
+        score += score_params["divergence_bullish_bonus"]
         notes.append("RSI bullish divergence")
     elif divergence["bearish"]:
-        score -= 14
+        score -= score_params["divergence_bearish_penalty"]
         notes.append("RSI bearish divergence")
 
-    if fib_proximity_pct < 1.5:
-        score += 8
+    if fib_proximity_pct < fib_proximity_threshold_pct:
+        score += score_params["fib_proximity_bonus"]
         notes.append(f"Fib yakini (%{fib_proximity_pct})")
 
-    if atr_rr >= 2.0:
-        score += 6
+    if atr_rr >= score_params["atr_rr_high_threshold"]:
+        score += score_params["atr_rr_bonus"]
         notes.append(f"ATR R:R={atr_rr}")
-    elif atr_rr < 1.0:
-        score -= 6
+    elif atr_rr < score_params["atr_rr_low_threshold"]:
+        score -= score_params["atr_rr_penalty"]
         notes.append(f"Dusuk ATR R:R={atr_rr}")
 
     return round(float(np.clip(score, 0, 100)), 2), notes

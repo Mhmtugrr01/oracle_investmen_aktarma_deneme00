@@ -1,0 +1,11 @@
+{
+  "min_composite_score_suggested": -0.015,
+  "confidence_threshold_suggested": 0.301,
+  "max_consensus_variance_suggested": 1.0,
+  "weights_used": {
+    "macro": 0.0,
+    "quant": 0.05,
+    "fundamental": 0.95,
+    "sentiment": 0.0
+  }
+}

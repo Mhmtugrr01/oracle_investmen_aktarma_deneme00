@@ -47,15 +47,25 @@ BINANCE_DATA_URL = "https://data-api.binance.vision/api/v3/klines"
 CRYPTO_FALLBACK_EXCHANGES = ("kraken", "okx", "kucoin")
 
 
-def _ssl_context(verify: bool | None = None) -> ssl.SSLContext:
+def build_ssl_context(verify: bool | None = None) -> ssl.SSLContext:
     if verify is None:
         verify = os.getenv("SSL_VERIFY", "true").lower() not in ("0", "false", "no")
     if verify:
-        return ssl.create_default_context(cafile=certifi.where())
+        try:
+            import truststore
+
+            truststore.inject_into_ssl()
+            return ssl.create_default_context()
+        except ImportError:
+            return ssl.create_default_context(cafile=certifi.where())
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
+
+
+def _ssl_context(verify: bool | None = None) -> ssl.SSLContext:
+    return build_ssl_context(verify)
 
 
 def _aiohttp_connector(verify: bool | None = None) -> aiohttp.TCPConnector:
@@ -116,7 +126,53 @@ def _ohlcv_to_dataframe(raw: list[list[Any]]) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-    return df.reset_index(drop=True)
+def _is_crypto_symbol(symbol: str) -> bool:
+    token = symbol.upper()
+    return "/" in token or token.endswith("USDT") or token.endswith("USD")
+
+
+def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    frame = df.copy()
+    frame = frame.set_index("timestamp")
+    resampled = frame.resample(rule).agg(
+        {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }
+    )
+    resampled = resampled.dropna(subset=["open", "high", "low", "close"])
+    return resampled.reset_index()
+
+
+async def _fetch_yfinance_ohlcv(symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+    import yfinance as yf
+
+    interval_map = {
+        "1h": ("730d", "1h"),
+        "4h": ("730d", "1h"),
+        "1d": ("5y", "1d"),
+        "1w": ("10y", "1wk"),
+    }
+    period, interval = interval_map.get(timeframe, ("5y", "1d"))
+    raw = yf.download(
+        symbol,
+        period=period,
+        interval=interval,
+        progress=False,
+        auto_adjust=True,
+        threads=False,
+    )
+    df = _normalize_yfinance_df(raw, symbol)
+
+    if timeframe == "4h":
+        df = _resample_ohlcv(df, "4H")
+    elif timeframe in ("1w", "1wk"):
+        df = _resample_ohlcv(df, "W-FRI")
+
+    return df.tail(max(limit, 20)).reset_index(drop=True)
 
 
 async def _fetch_binance_klines_public(
@@ -259,11 +315,14 @@ async def fetch_crypto_ohlcv(
     exchange_id: str = "binance",
 ) -> pd.DataFrame:
     """
-    Binance OHLCV ceker. Once CCXT async, basarisizsa public klines fallback.
-    Exponential backoff ile 4 denemeye kadar yeniden dener.
+    Crypto semboller için CCXT/public klines kullanır.
+    Crypto olmayan semboller için yfinance tabanlı OHLCV döndürür.
     """
     logger.debug(f"fetch_crypto_ohlcv: {symbol} {timeframe} limit={limit}")
-    df = await _fetch_crypto_multi_source(symbol, timeframe, limit, exchange_id)
+    if _is_crypto_symbol(symbol):
+        df = await _fetch_crypto_multi_source(symbol, timeframe, limit, exchange_id)
+    else:
+        df = await _fetch_yfinance_ohlcv(symbol, timeframe, limit)
 
     if len(df) < 20:
         raise ValueError(f"{symbol} yetersiz bar: {len(df)}")
