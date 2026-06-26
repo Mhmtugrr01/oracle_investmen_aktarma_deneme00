@@ -112,7 +112,7 @@ async def end_failed_node(state: OracleState) -> dict[str, Any]:
     # EKLENDI: sinyal etiketini temizle
     failed = failed.model_copy(update={
         "signal_label": None,
-        "signal_direction": None,
+        "signal_direction": no_trade,
         "ceo_approved": False,
     })
     return _diff_state(state, failed)
@@ -140,7 +140,7 @@ async def end_low_score_node(state: OracleState) -> dict[str, Any]:
             "status": PipelineStatus.ABORTED,
             "fatal_error": reason,
             "signal_label": None,       # EKLENDI: hayalet sinyal temizle
-            "signal_direction": None,   # EKLENDI
+            "signal_direction": no_trade,   # EKLENDI
             "ceo_approved": False,      # EKLENDI
             "messages": [f"[SYSTEM] {reason}"],
         }
