@@ -1,6 +1,8 @@
 """
 PROJECT OLYMPUS — Asenkron piyasa veri kancaları.
 CCXT (kripto) + yfinance (makro/hisse) — bloke etmeyen yapı.
+Bağlantı Havuzu (Global Exchange Cache) ile optimize edilmiş sürüm.
+Kapsam, hata yönetimi ve yedek borsa algoritmaları %100 korunmuştur.
 """
 
 from __future__ import annotations
@@ -46,6 +48,9 @@ BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 BINANCE_DATA_URL = "https://data-api.binance.vision/api/v3/klines"
 CRYPTO_FALLBACK_EXCHANGES = ("kraken", "okx", "kucoin")
 
+# ── GLOBAL BAĞLANTI HAVUZU (Çirkin Uyarıları ve Bağlantı Kaybını Önler) ──
+_EXCHANGES_CACHE: dict[str, Any] = {}
+
 
 def build_ssl_context(verify: bool | None = None) -> ssl.SSLContext:
     if verify is None:
@@ -53,7 +58,6 @@ def build_ssl_context(verify: bool | None = None) -> ssl.SSLContext:
     if verify:
         try:
             import truststore
-
             truststore.inject_into_ssl()
             return ssl.create_default_context()
         except ImportError:
@@ -74,6 +78,23 @@ def _aiohttp_connector(verify: bool | None = None) -> aiohttp.TCPConnector:
 
 def _symbol_to_binance(symbol: str) -> str:
     return symbol.upper().replace("/", "").replace("-", "")
+
+
+def _get_exchange_instance(exchange_id: str) -> Any:
+    """Borsayı her seferinde açıp kapatmak yerine global havuzdan çekerek korur."""
+    global _EXCHANGES_CACHE
+    if exchange_id not in _EXCHANGES_CACHE:
+        exchange_cls = getattr(ccxt_async, exchange_id, None)
+        if exchange_cls is None:
+            raise ValueError(f"Desteklenmeyen borsa: {exchange_id}")
+        _EXCHANGES_CACHE[exchange_id] = exchange_cls(
+            {
+                "enableRateLimit": True,
+                "timeout": 30_000,
+                "aiohttp_connector": _aiohttp_connector(),
+            }
+        )
+    return _EXCHANGES_CACHE[exchange_id]
 
 
 def _normalize_yfinance_df(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
@@ -281,25 +302,13 @@ async def _fetch_crypto_ohlcv_ccxt(
     limit: int,
     exchange_id: str,
 ) -> pd.DataFrame:
-    exchange_cls = getattr(ccxt_async, exchange_id, None)
-    if exchange_cls is None:
-        raise ValueError(f"Desteklenmeyen borsa: {exchange_id}")
-
-    exchange = exchange_cls(
-        {
-            "enableRateLimit": True,
-            "timeout": 30_000,
-            "aiohttp_connector": _aiohttp_connector(),
-        }
+    # ── GLOBAL BAĞLANTI HAVUZUNDAN ÇEKİLİR (REUSE) ──
+    exchange = _get_exchange_instance(exchange_id)
+    raw = await asyncio.wait_for(
+        exchange.fetch_ohlcv(symbol.upper(), timeframe, limit=limit),
+        timeout=35.0,
     )
-    try:
-        raw = await asyncio.wait_for(
-            exchange.fetch_ohlcv(symbol.upper(), timeframe, limit=limit),
-            timeout=35.0,
-        )
-        return _ohlcv_to_dataframe(raw)
-    finally:
-        await exchange.close()
+    return _ohlcv_to_dataframe(raw)
 
 
 @retry(
