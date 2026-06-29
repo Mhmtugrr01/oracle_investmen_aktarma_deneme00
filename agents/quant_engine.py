@@ -400,7 +400,9 @@ def calculate_trade_levels(
         t3 = entry_price - atr * t3_multiplier
         invalidation_level = swing_high
 
-    risk = abs(entry_price - stop_loss)
+    # GERÇEK KURUMSAL RISK ZIRHI (RISKI FİYATIN %1.5'UNDAN DAHA AZ OLARAK BAZ ALMAYARAK R:R İLLÜZYONUNU BİTİR!)
+    raw_risk = abs(entry_price - stop_loss)
+    risk = max(raw_risk, entry_price * 0.015)
     t1_rr = abs(t1 - entry_price) / risk if risk > 0 else 0.0
     t2_rr = abs(t2 - entry_price) / risk if risk > 0 else 0.0
     t3_rr = abs(t3 - entry_price) / risk if risk > 0 else 0.0

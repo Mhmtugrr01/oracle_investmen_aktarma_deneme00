@@ -86,7 +86,7 @@ class OracleScanner:
                             f"[SCANNER] FIRSAT: {asset} → {result['signal']} "
                             f"(skor: {result.get('composite_pct', 0)}%)"
                         )
-                    await asyncio.sleep(2)
+                    await asyncio.sleep()
                 except Exception as exc:
                     logger.warning(f"[SCANNER] {asset} tarama hatası: {exc}")
                     continue
@@ -101,6 +101,16 @@ class OracleScanner:
     async def _full_scan_loop(self):
         interval_hours = self.scan_config.get("full_scan_interval_hours", 4)
         interval_sec = interval_hours * 3600
+        await asyncio.sleep(60)
+        while self._running:
+            try:
+                # Kullanıcı işlemleri çökmesin diye Tarama görevi Event Loop içinden korumaya alınıyor!
+                await asyncio.wait_for(self._run_scan_once(), timeout=900) 
+            except asyncio.TimeoutError:
+                logger.error("[SCANNER] Tarama süresi 15 dakikayı geçti, döngü zorla atlandı.")
+            except Exception as e:
+                logger.error(f"[SCANNER] Tam tarama hata aldı: {e}")
+            await asyncio.sleep(interval_sec)
 
         while self._running:
             await self._run_scan_once()
@@ -116,6 +126,10 @@ class OracleScanner:
             signal = state_data.get("signal_label") or state_data.get("signal")
             composite = float(state_data.get("composite_score", 0.0))
             base_rr = state_data.get("base_rr")
+            # EGER ISLEM ORACLE/CEO TARAFINDAN IPTAL (ABORT) EDILDIYSE ASLA LISTEYE YAZMA!
+            status_str = str(state_data.get("status", "")).upper()
+            if "ABORT" in status_str or "FAIL" in status_str or state_data.get("fatal_error"):
+                return None
 
             if signal in ["STRONG_BUY", "ACCUMULATE", "STRONG_SELL", "SHORT", "REDUCE", "LONG_FIRSAT", "SHORT_FIRSAT"]:
                 return {

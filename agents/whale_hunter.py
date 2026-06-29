@@ -175,7 +175,7 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
             async with s.get(
                 funding_url,
                 params={"symbol": futures_symbol},
-                timeout=aiohttp.ClientTimeout(total=8),
+                timeout=aiohttp.ClientTimeout(total=2),
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -187,7 +187,7 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
             async with s.get(
                 oi_url,
                 params={"symbol": futures_symbol},
-                timeout=aiohttp.ClientTimeout(total=8),
+                timeout=aiohttp.ClientTimeout(total=2),
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -199,7 +199,7 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
             async with s.get(
                 ls_url,
                 params={"symbol": futures_symbol, "period": "4h", "limit": 2},
-                timeout=aiohttp.ClientTimeout(total=8),
+                timeout=aiohttp.ClientTimeout(total=2),
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -210,10 +210,9 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
                 else:
                     results["long_short_ratio"] = 1.0
     except Exception as exc:
-        logger.warning(f"Binance futures hatası {symbol}: {exc}")
-        results.setdefault("funding_rate", 0.0)
-        results.setdefault("open_interest", 0.0)
-        results.setdefault("long_short_ratio", 1.0)
+        logger.warning(f"[TIMEOUT/BYPASS] Futures Hata: Sistem donmasın diye gecirildi! {exc}")
+        return {"oi_change": 0.0, "funding_rate": 0.0, "futures_score": 0.0, "long_short_ratio": 1.0}
+       
 
     funding = float(results.get("funding_rate", 0.0) or 0.0)
     ls_ratio = float(results.get("long_short_ratio", 1.0) or 1.0)
