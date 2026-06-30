@@ -129,8 +129,14 @@ def _normalize_yfinance_df(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
 
     df = df.dropna(subset=["open", "high", "low", "close"])
     df = df[OHLCV_COLUMNS].sort_values("timestamp").reset_index(drop=True)
+    # ⏳ L.A.B GİYOTİNİ (LOOK AHEAD BIAS KALKANI): Geleceği asla çekme!
+    # import os
+    as_of = os.getenv("BACKTEST_AS_OF")
+    if as_of:
+        as_of_dt = pd.to_datetime(as_of, utc=True)
+        df = df[df["timestamp"] <= as_of_dt]
 
-    if len(df) < 5:
+    if len(df) < 3:
         raise ValueError(f"{ticker} yetersiz bar sayisi: {len(df)}")
 
     return df
@@ -144,6 +150,15 @@ def _ohlcv_to_dataframe(raw: list[list[Any]]) -> pd.DataFrame:
     for col in ("open", "high", "low", "close", "volume"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["open", "high", "low", "close"])
+    df = df.dropna(subset=["open", "high", "low", "close"])
+    
+    # ⏳ L.A.B GİYOTİNİ KRIPTO İÇİN EKLE:
+    import os
+    as_of = os.getenv("BACKTEST_AS_OF")
+    if as_of:
+        as_of_dt = pd.to_datetime(as_of, utc=True)
+        df = df[df["timestamp"] <= as_of_dt]
+
     return df.reset_index(drop=True)
 
 
@@ -189,7 +204,7 @@ async def _fetch_yfinance_ohlcv(symbol: str, timeframe: str, limit: int) -> pd.D
     df = _normalize_yfinance_df(raw, symbol)
 
     if timeframe == "4h":
-        df = _resample_ohlcv(df, "4H")
+        df = _resample_ohlcv(df, "4h")
     elif timeframe in ("1w", "1wk"):
         df = _resample_ohlcv(df, "W-FRI")
 
@@ -328,6 +343,21 @@ async def fetch_crypto_ohlcv(
     Crypto olmayan semboller için yfinance tabanlı OHLCV döndürür.
     """
     logger.debug(f"fetch_crypto_ohlcv: {symbol} {timeframe} limit={limit}")
+    
+    # ── ⏳ BACKTEST SÜRECİNDE CRYPTO'LARI CCXT YERİNE MULTI-YEAR YFINANCE'E YÖNLENDİR (Look-Ahead Korumalı!) ──
+    import os
+    if os.getenv("BACKTEST_AS_OF"):
+        # CCXT (BTC/USDT) formatını YFinance (BTC-USD) formatına çeviriyoruz
+        yf_symbol = symbol.replace("/USDT", "-USD").replace("/USD", "-USD")
+        df = await _fetch_yfinance_ohlcv(yf_symbol, timeframe, limit=1000)
+        
+        # Giyotinle Keserek Gelecek Sızıntısını önle
+        as_of = os.getenv("BACKTEST_AS_OF")
+        if as_of:
+            as_of_dt = pd.to_datetime(as_of, utc=True)
+            df = df[df["timestamp"] <= as_of_dt]
+        return df
+
     if _is_crypto_symbol(symbol):
         df = await _fetch_crypto_multi_source(symbol, timeframe, limit, exchange_id)
     else:
@@ -336,6 +366,7 @@ async def fetch_crypto_ohlcv(
     if len(df) < 20:
         raise ValueError(f"{symbol} yetersiz bar: {len(df)}")
     return df
+
 
 
 def _download_yfinance(ticker: str, period: str, interval: str) -> pd.DataFrame:
@@ -368,9 +399,16 @@ async def fetch_stock_macro_data(
     DXY (DX-Y.NYB), VIX (^VIX), SPY, NVDA vb. destekler.
     """
     yahoo_ticker = MACRO_TICKERS.get(ticker.upper(), ticker)
+    
+    # ⏳ BACKTEST SÜRECİNDE GEÇMİŞ VERİLERİN KESİLMEMESİ İÇİN PERİYODU 5 YILA GENİŞLET
+    import os
+    if os.getenv("BACKTEST_AS_OF"):
+        period = "5y"
+        
     logger.debug(f"yfinance download: {yahoo_ticker} period={period}")
     df = await asyncio.to_thread(_download_yfinance, yahoo_ticker, period, interval)
     return df
+
 
 
 async def fetch_macro_bundle() -> dict[str, pd.DataFrame]:

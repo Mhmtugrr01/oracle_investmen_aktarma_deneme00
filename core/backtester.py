@@ -16,6 +16,7 @@ from typing import Any
 
 import pandas as pd
 import yfinance as yf
+import os
 
 from agents.fundamental_filter import run_fundamental_filter
 from agents.macro_sentinel import run_macro_sentinel
@@ -171,7 +172,8 @@ async def run_backtest() -> Path:
         w_fund /= four_sum
         w_sent /= four_sum
 
-    weekly_dates = pd.date_range(start="2022-01-01", end=pd.Timestamp.now("UTC").tz_localize(None), freq="W-FRI")
+    # yfinance saatlik (1h/4h) veri kısıtı nedeniyle (en fazla 730 gün geriye gider) backtest başlangıcını Eylül 2024'e çekiyoruz.
+    weekly_dates = pd.date_range(start="2024-09-01", end=pd.Timestamp.now("UTC").tz_localize(None), freq="W-FRI")
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     cols = [
@@ -197,15 +199,15 @@ async def run_backtest() -> Path:
         if close is None:
             continue
 
-        try:
-            # Mevcut ajanlar tarih-parametresi almadigi icin skorlari sembol bazinda tek kez hesapliyoruz.
-            base_state = await _run_five_agents(symbol, weekly_dates[0])
-        except Exception as exc:
-            base_state = OracleState(symbol=symbol, fatal_error=str(exc))
-
         for dt in weekly_dates:
+            # Mevcut ajanlar tarih-parametresi almadigi icin skorlari sembol bazinda tek kez hesapliyoruz.
+            import os
+            # AJANLARA TAKVİM ZERK ETME (MAKAS KOMUTUNU HAZIRLA):
+            os.environ["BACKTEST_AS_OF"] = dt.strftime("%Y-%m-%d %H:%M:%S")
             try:
-                state = base_state
+                # Gerçek Asimetri: Carkların İÇİNDE her haftanın datası tek tek çalışır, o haftaya kördür.
+                state = await _run_five_agents(symbol, dt)
+                
 
                 macro = _to_float(state.macro_score) or 0.0
                 quant = _to_float(state.quant_score) or 0.0

@@ -1,7 +1,7 @@
-"""DÜĞÜM 1 — Makro Likidite Ajanı (Macro Sentinel)."""
+"""DÜĞÜM 1 — Makro Likidite Ajanı (Macro Sentinel) - Carry-Trade Reformed v2.0."""
 
 import asyncio
-
+import os
 import aiohttp
 import yfinance as yf
 from loguru import logger
@@ -188,6 +188,14 @@ async def run_macro_sentinel(state: OracleState) -> OracleState:
         dxy_df = bundle["DXY"]
         vix_df = bundle["VIX"]
         spy_df = bundle["SPY"]
+        
+        # ── 🇯🇵 JAPON YENİ CARRY-TRADE RISK MONITOR (R06) ──
+        usdjpy_df = bundle.get("USDJPY")
+        if usdjpy_df is not None:
+            # JPY=X düşüşü = Yen'in ABD dolarına karşı değer kazanması (Carry Unwind Tehlikesi)
+            jpy_change_7d = pct_change_over(usdjpy_df, bars=5)
+            if jpy_change_7d < -1.50:
+                warnings.append(f"⚠️ JAPON YENİ GÜÇLENİYOR (Carry-Trade Unwind Riski) -> USD/JPY: {jpy_change_7d:+.2f}%")
 
         dxy_chg = pct_change_over(dxy_df, bars=5)
         vix_chg = pct_change_over(vix_df, bars=5)

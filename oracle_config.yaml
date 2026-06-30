@@ -1,8 +1,8 @@
 analysis:
   weights:
-    macro: 0.10
+    macro: 0.15
     quant: 0.40
-    whale: 0.15
+    whale: 0.10
     fundamental: 0.25
     sentiment: 0.10
 

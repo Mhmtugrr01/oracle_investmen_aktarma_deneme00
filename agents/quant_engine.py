@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import pandas_ta as ta
 import yfinance as yf
+import numpy as np
 from loguru import logger
 
 from core.config import load_oracle_config
@@ -256,24 +257,94 @@ def _alignment_score(biases: dict[str, str]) -> tuple[float, int]:
     mapping = {4: 1.0, 3: 0.75, 2: 0.50}
     return mapping.get(aligned, 0.25), aligned
 
+def _detect_price_breakout(df: pd.DataFrame) -> bool:
+    """
+    Fiyat grafiğinde son 20 bardaki zirvelerden geçen düşen trend çizgisinin 
+    yukarı yönlü kırılıp kırılmadığını (Düşeni Kırma) lineer regresyon ile doğrular.
+    """
+    if len(df) < 20:
+        return False
+        
+    recent_highs = df["high"].tail(20).values
+    x = np.arange(len(recent_highs))
+    
+    # En iyi uyum sağlayan direnç çizgisinin eğimini (slope) hesapla
+    slope, intercept = np.polyfit(x, recent_highs, 1)
+    
+    # Eğim pozitifse zaten düşen trend yoktur, kırılım aranmaz
+    if slope >= 0:
+        return False
+        
+    # Son iki barın trend çizgisi değerleri
+    prev_trend_val = slope * 18 + intercept
+    curr_trend_val = slope * 19 + intercept
+    
+    prev_close = df["close"].iloc[-2]
+    curr_close = df["close"].iloc[-1]
+    
+    # Kırılım Koşulu: Önceki bar trendin altındayken, güncel bar trendin üzerinde kapattı mı?
+    if prev_close <= prev_trend_val and curr_close > curr_trend_val:
+        # Hacim Teyidi: Son barın hacmi, son 10 barın hacim ortalamasının üzerinde olmalı!
+        recent_volume_avg = df["volume"].tail(10).mean()
+        if df["volume"].iloc[-1] > recent_volume_avg * 0.95:
+            return True
+            
+    return False
 
-def _decide_trade_type(weekly_bias: str, daily_bias: str, h4_bias: str, h1_bias: str) -> str:
-    # YENİ: Çoklu OVERSOLD = en güçlü contrarian fırsat
+
+def _detect_rsi_breakout(df: pd.DataFrame, rsi_col: str = "rsi_14") -> bool:
+    """
+    RSI göstergesinin kendi düşen trend çizgisini (momentum kırılımını) 
+    yukarı kırıp kırmadığını hesaplar.
+    """
+    if len(df) < 20 or rsi_col not in df.columns:
+        return False
+        
+    recent_rsi = df[rsi_col].tail(20).values
+    x = np.arange(len(recent_rsi))
+    slope, intercept = np.polyfit(x, recent_rsi, 1)
+    
+    if slope >= 0:
+        return False
+        
+    prev_trend_val = slope * 18 + intercept
+    curr_trend_val = slope * 19 + intercept
+    
+    prev_rsi = df[rsi_col].iloc[-2]
+    curr_rsi = df[rsi_col].iloc[-1]
+    
+    # RSI Düşen Trend Kırılım Teyidi
+    if prev_rsi <= prev_trend_val and curr_rsi > curr_trend_val:
+        return True
+        
+    return False
+
+def _decide_trade_type(weekly_bias: str, daily_bias: str, h4_bias: str, h1_bias: str, price_breakout: bool, rsi_breakout: bool) -> str:
+    # ── 🛡️ MULTI-TIMEFRAME CONFLUENCE & TRENDLINE BREAKOUT REFORM (R06) ──
     all_biases = [weekly_bias, daily_bias, h4_bias, h1_bias]
     oversold_count = sum(1 for b in all_biases if b == "OVERSOLD")
-    if oversold_count >= 3:
-        return "STRONG_LONG_TERM_ENTRY"  # 3+ OVERSOLD = aşırı satım toplama bölgesi
+    
+    # Haftalık grafik Bearish (Trend Aşağı) ise alt zaman dilimlerindeki ham alımları KİLİTLE!
+    # Sadece ve sadece fiyatta VEYA RSI'da net bir düşen kırılımı geldiyse oyuna gir!
+    has_breakout = price_breakout or rsi_breakout
+    
+    # 3 veya daha fazla zaman dilimi oversold + kırılım varsa bu jenerasyonel bir fırsattır!
+    if oversold_count >= 3 and has_breakout:
+        return "STRONG_LONG_TERM_ENTRY"
+        
+    # Günlük grafik oversold ama henüz düşen kırılımı yoksa: ALMA, Pusuya yat!
+    if daily_bias == "OVERSOLD" and not has_breakout:
+        return "AVOID_CONFLICTING_SIGNALS" # "Watchlist_Accumulation_Prep" yerine işleme girmeyi zorla engeller!
 
-    # YENİ: SHORT_TERM_BOUNCE_ONLY aslında LONG yönlü, düzeltme
-    # Eski kodda bu durum SHORT sinyal üretiyordu — hata. ACCUMULATE_ZONE döndür:
-    if weekly_bias == "BEARISH" and h1_bias == "OVERSOLD":
-        return "ACCUMULATE_ZONE"  # Eski: SHORT_TERM_BOUNCE_ONLY (yanlış yön)
+    # Günlük grafik oversold olmuş VEYA trend dönüşü teyit edilmiş + düşen trend kırılmışsa: AL!
+    if (daily_bias in ["OVERSOLD", "BULLISH"] or oversold_count >= 1) and has_breakout:
+        if weekly_bias == "BEARISH":
+            return "SHORT_TERM_BOUNCE_ONLY" # Haftalık düşerken günlük kırılım = tepki alımı
+        return "ACCUMULATE_ZONE" # Haftalık yön yukarı/nötr ise güvenli toplama alanı
 
     if weekly_bias == "BULLISH" and daily_bias == "BULLISH":
         if h4_bias in ["BULLISH", "OVERSOLD"] and h1_bias in ["BULLISH", "OVERSOLD"]:
             return "STRONG_LONG_TERM_ENTRY"
-        if h4_bias == "NEUTRAL" or h1_bias == "NEUTRAL":
-            return "ACCUMULATE_ZONE"
         return "HOLD_EXISTING"
 
     if weekly_bias == "BULLISH" and daily_bias in ["NEUTRAL", "OVERBOUGHT"]:
@@ -589,7 +660,14 @@ async def run_quant_engine(state: OracleState) -> OracleState:
         daily_bias = biases["1d"]
         h4_bias = biases["4h"]
         h1_bias = biases["1h"]
-        trade_type = _decide_trade_type(weekly_bias, daily_bias, h4_bias, h1_bias)
+        # Fiyat ve RSI grafiklerinin kendi düşen kırılımlarını (breakout) teyit et!
+        price_breakout = _detect_price_breakout(df_local)
+        rsi_breakout = _detect_rsi_breakout(df_local, rsi_col="rsi_14")
+        
+        trade_type = _decide_trade_type(
+            weekly_bias, daily_bias, h4_bias, h1_bias,
+            price_breakout=price_breakout, rsi_breakout=rsi_breakout
+        )
 
         divergence_daily = _detect_divergence(tf_dfs["1d"], pivot=14) if len(tf_dfs["1d"]) >= 20 else "NONE"
         divergence_weekly = _detect_divergence(tf_dfs["1w"], pivot=8) if len(tf_dfs["1w"]) >= 20 else "NONE"
