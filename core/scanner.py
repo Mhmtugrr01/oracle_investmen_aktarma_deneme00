@@ -86,7 +86,7 @@ class OracleScanner:
                             f"[SCANNER] FIRSAT: {asset} → {result['signal']} "
                             f"(skor: {result.get('composite_pct', 0)}%)"
                         )
-                    await asyncio.sleep()
+                    await asyncio.sleep(10)
                 except Exception as exc:
                     logger.warning(f"[SCANNER] {asset} tarama hatası: {exc}")
                     continue
