@@ -663,18 +663,12 @@ async def run_quant_engine(state: OracleState) -> OracleState:
         # Fiyat ve RSI grafiklerinin kendi düşen kırılımlarını (breakout) teyit et!
         # # ── 🛡️ DYNAMIC NAMESPACE RESOLVER (df_local Tanımsızlık Kalkanı) ──
         # # Değişken ismi localde ne olursa olsun bulur ve NameError oluşmasını engeller!
-        df_local = locals().get("df_1d") or locals().get("df_target") or locals().get("df") or locals().get("df_4h")
-        if df_local is None:
-            # Fallback: Eğer hiçbiri yoksa varsayılan günlük veriyi ata
-            df_local = df_1d
+        df_local = tf_dfs.get("1d")
+        if df_local is None or df_local.empty:
+            df_local = tf_dfs.get("4h")
 
         price_breakout = _detect_price_breakout(df_local)
         rsi_breakout = _detect_rsi_breakout(df_local, rsi_col="rsi_14")
-        
-        trade_type = _decide_trade_type(
-            weekly_bias, daily_bias, h4_bias, h1_bias,
-            price_breakout=price_breakout, rsi_breakout=rsi_breakout
-        )
         
         trade_type = _decide_trade_type(
             weekly_bias, daily_bias, h4_bias, h1_bias,

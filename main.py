@@ -10,6 +10,19 @@ from fastapi.responses import HTMLResponse
 from bot.telegram_handler import create_handler
 from loguru import logger
 from contextlib import asynccontextmanager
+from fastapi.responses import JSONResponse
+
+# ── 👁️ GLOBAL TELEMETRİ KONSOLU (Log Interceptor) ──
+GLOBAL_LOGS: list[str] = []
+
+def custom_log_sink(message):
+    """Tüm sistem loglarını yakalayıp web paneline besler."""
+    clean_msg = message.strip()
+    GLOBAL_LOGS.append(clean_msg)
+    if len(GLOBAL_LOGS) > 80:
+        GLOBAL_LOGS.pop(0)
+
+logger.add(custom_log_sink, format="{time:HH:mm:ss} | {message}")
 
 handler = None
 
@@ -31,7 +44,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+@app.get("/api/logs")
+def get_live_logs():
+    """Canlı logları JSON olarak web paneline servis eder."""
+    return JSONResponse(content={"logs": GLOBAL_LOGS})
+
 @app.get("/", response_class=HTMLResponse)
+
 def read_root():
     """CEO Portföy Başarı ve Durum İzleme Paneli (Apple Dark Mode)."""
     return """
@@ -57,6 +76,19 @@ def read_root():
                 <div class="mt-4 md:mt-0 flex items-center space-x-2">
                     <span class="h-3 w-3 rounded-full bg-green-500 animate-pulse"></span>
                     <span class="text-sm font-semibold text-green-400">Bulut Sunucusu Aktif (7/24)</span>
+                </div>
+            </div>
+
+            <!-- Grid 1: Ana İstatistikler -->
+            <div class="mb-8">
+                <div class="bg-[#111827] rounded-2xl border border-gray-800 p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xs font-extrabold text-gray-400 uppercase tracking-wider">👁️ BEYİN AMELİYATI KONSOLU (LIVE AGENT SCANNER LOGS)</h3>
+                        <span class="text-[10px] bg-red-950 text-red-400 px-2.5 py-1 rounded-md font-bold">GERÇEK ZAMANLI</span>
+                    </div>
+                    <div id="terminal" class="bg-[#05070F] text-green-400 font-mono text-xs p-4 rounded-xl border border-gray-950 h-56 overflow-y-auto space-y-1.5">
+                        <p class="text-gray-500">[SYSTEM] Canlı log bağlantısı bekleniyor...</p>
+                    </div>
                 </div>
             </div>
 
@@ -155,10 +187,35 @@ def read_root():
             <div class="mt-12 text-center text-xs text-gray-500 border-t border-gray-800 pt-6">
                 The Oracle R06_MASTER © 2026. Tüm Hakları Saklıdır. Yatırım Tavsiyesi Değildir.
             </div>
-        </div>
-    </body>
-    </html>
-    """
+    </div>
+            <!-- ── ⚡ AJAX LOG LOOPER (Saniyede 1 can damarı çeker) ── -->
+            <script>
+                const terminal = document.getElementById("terminal");
+                
+                async function updateLogs() {
+                    try {
+                        const response = await fetch("/api/logs");
+                        const data = await response.json();
+                        if (data.logs && data.logs.length > 0) {
+                            terminal.innerHTML = data.logs.map(log => {
+                                let color = "text-green-400";
+                                if (log.includes("ERROR") || log.includes("FATAL") || log.includes("Hata")) color = "text-red-500 font-bold";
+                                else if (log.includes("WARNING")) color = "text-yellow-500";
+                                else if (log.includes("[SYSTEM]")) color = "text-cyan-400";
+                                else if (log.includes("[SCANNER]")) color = "text-purple-400";
+                                return `<p class="${color}">${log}</p>`;
+                            }).join("");
+                            terminal.scrollTop = terminal.scrollHeight;
+                        }
+                    } catch (e) {
+                        console.error("Log hatası:", e);
+                    }
+                }
+                setInterval(updateLogs, 2000);
+            </script>
+        </body>
+        </html>
+        """
 
 def main():
     port = int(os.getenv("PORT", 8000))

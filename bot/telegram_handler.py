@@ -26,9 +26,15 @@ _PROGRESS_STEPS: Final[list[str]] = [
 
 
 def _normalize_symbol(raw: str) -> str:
-    token = raw.strip().upper()
+    # ── GÜVENLİK VE ARINDIRMA SÜZGECİ (Sanitizer v2.0) ──
+    token = raw.strip().replace("[", "").replace("]", "").replace("{", "").replace("}", "").replace("$", "").replace(" ", "").upper()
     if not token:
         return "BTC/USDT"
+        
+    # Eğer kullanıcı zaten "FETUSDT" yazdıysa sondaki "USDT"yi kırp (FETUSDT/USDT hatasını engelle!)
+    if token.endswith("USDT") and "/" not in token:
+        token = token[:-4] # "USDT" kısmını atar (FETUSDT -> FET kalır)
+        
     if "/" in token:
         return token
     return f"{token}/USDT"
