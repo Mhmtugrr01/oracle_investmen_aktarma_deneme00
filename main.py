@@ -44,10 +44,48 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+import yaml
+from fastapi import Request
+
 @app.get("/api/logs")
 def get_live_logs():
     """Canlı logları JSON olarak web paneline servis eder."""
     return JSONResponse(content={"logs": GLOBAL_LOGS})
+
+@app.get("/api/config")
+def get_config():
+    """Mevcut yaml konfigürasyonunu güvenle okur."""
+    try:
+        with open("oracle_config.yaml", "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        return cfg
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/api/config")
+async def save_config(request: Request):
+    """Web arayüzünden gelen parametreleri yaml dosyasına güvenle yazar."""
+    try:
+        new_data = await request.json()
+        with open("oracle_config.yaml", "r", encoding="utf-8") as f:
+            current_cfg = yaml.safe_load(f)
+            
+        # Sadece izin verilen güvenli alanları güncelle (Pydantic yapısını bozmamak için)
+        if "analysis" in new_data and "weights" in new_data["analysis"]:
+            current_cfg["analysis"]["weights"].update(new_data["analysis"]["weights"])
+        if "risk" in new_data:
+            current_cfg["risk"].update(new_data["risk"])
+        if "ceo" in new_data:
+            current_cfg["ceo"].update(new_data["ceo"])
+            
+        with open("oracle_config.yaml", "w", encoding="utf-8") as f:
+            yaml.safe_dump(current_cfg, f, default_flow_style=False, allow_unicode=True)
+            
+        logger.info("[SYSTEM] oracle_config.yaml web arayüzü üzerinden güncellendi. Yeni rasyolar aktif.")
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"[SYSTEM] Config güncelleme hatası: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
 @app.get("/", response_class=HTMLResponse)
 
@@ -65,7 +103,7 @@ def read_root():
             body { background-color: #0B0F19; color: #F3F4F6; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         </style>
     </head>
-    <body class="p-6 md:p-12">
+    <body class="p-6 md:p-12" onload="loadConfig()">
         <div class="max-w-5xl mx-auto">
             <!-- Header -->
             <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-800 pb-6 mb-8">
@@ -160,28 +198,44 @@ def read_root():
 
                 <!-- Sağ Panel: Aktif Portföy Evreni -->
                 <div class="bg-[#111827] p-8 rounded-2xl border border-gray-800 flex flex-col justify-between">
-                    <div>
-                        <h3 class="text-xl font-bold text-white mb-6 border-b border-gray-800 pb-3">İzleme Evreni</h3>
-                        <div class="flex flex-wrap gap-2">
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">BTC</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">ETH</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">INJ</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">RNDR</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">FET</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">COIN</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">NVDA</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">TSLA</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">MSTR</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">THYAO.IS</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">GARAN.IS</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">ONS ALTIN</span>
+                    <form id="configForm" class="space-y-4" onsubmit="saveConfig(event)">
+                        <h3 class="text-xl font-bold text-white mb-4 border-b border-gray-800 pb-3">⚙️ İnteraktif Kontrol Paneli</h3>
+                        
+                        <!-- Composite Score Slider -->
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Minimum Kompozit Skor Eşiği: <span id="compositeVal" class="text-white">0.52</span></label>
+                            <input type="range" id="compositeScore" min="0.40" max="0.80" step="0.01" class="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('compositeVal').innerText = this.value">
                         </div>
-                    </div>
-                    <div class="mt-6 border-t border-gray-800 pt-6">
-                        <p class="text-sm text-gray-400">💡 <span class="font-semibold text-white">Yönetici Talimatı:</span> Sistem yön belirsizken uykuda kalır. Sadece 1'e 3 (R:R 3.0) asimetrik fırsat doğduğunda Telegram üzerinden mühürlü sinyal fırlatır.</p>
-                    </div>
+                        
+                        <!-- Min RR Input -->
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Minimum Risk-Reward Oranı (R:R)</label>
+                            <input type="number" id="minRR" step="0.1" class="w-full bg-[#05070F] border border-gray-800 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-blue-900">
+                        </div>
+                        
+                        <!-- Ağırlık Sliders -->
+                        <div class="border-t border-gray-800 pt-3 space-y-3">
+                            <h4 class="text-[10px] font-bold text-cyan-400 uppercase">Ajan Karar Ağırlıkları (%)</h4>
+                            <div>
+                                <label class="block text-[9px] text-gray-400 uppercase mb-0.5">Makro Ajanı: <span id="wMacro" class="text-white">15</span>%</label>
+                                <input type="range" id="weightMacro" min="0.0" max="1.0" step="0.05" class="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('wMacro').innerText = Math.round(this.value * 100)">
+                            </div>
+                            <div>
+                                <label class="block text-[9px] text-gray-400 uppercase mb-0.5">Quant & Breakout Ajanı: <span id="wQuant" class="text-white">40</span>%</label>
+                                <input type="range" id="weightQuant" min="0.0" max="1.0" step="0.05" class="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('wQuant').innerText = Math.round(this.value * 100)">
+                            </div>
+                            <div>
+                                <label class="block text-[9px] text-gray-400 uppercase mb-0.5">Temel Analiz (Fundamental) Ajanı: <span id="wFund" class="text-white">25</span>%</label>
+                                <input type="range" id="weightFund" min="0.0" max="1.0" step="0.05" class="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('wFund').innerText = Math.round(this.value * 100)">
+                            </div>
+                            <div>
+                                <label class="block text-[9px] text-gray-400 uppercase mb-0.5">Duygu (Sentiment) Ajanı: <span id="wSent" class="text-white">10</span>%</label>
+                                <input type="range" id="weightSent" min="0.0" max="1.0" step="0.05" class="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('wSent').innerText = Math.round(this.value * 100)">
+                            </div>
+                        </div>
+                        <button type="submit" class="w-full bg-green-900/60 hover:bg-green-800 border border-green-800 text-green-300 font-bold py-2 rounded-lg text-xs transition duration-150 mt-2">KAYDET VE CANLIYA UYGULA</button>
+                    </form>
                 </div>
-            </div>
 
             <!-- Footer -->
             <div class="mt-12 text-center text-xs text-gray-500 border-t border-gray-800 pt-6">
@@ -212,6 +266,63 @@ def read_root():
                     }
                 }
                 setInterval(updateLogs, 2000);
+
+                async function loadConfig() {
+                    try {
+                        const response = await fetch("/api/config");
+                        const cfg = await response.json();
+                        
+                        document.getElementById("compositeScore").value = cfg.ceo.min_composite_score;
+                        document.getElementById("compositeVal").innerText = cfg.ceo.min_composite_score;
+                        document.getElementById("minRR").value = cfg.risk.min_risk_reward_ratio;
+                        
+                        document.getElementById("weightMacro").value = cfg.analysis.weights.macro;
+                        document.getElementById("wMacro").innerText = Math.round(cfg.analysis.weights.macro * 100);
+                        
+                        document.getElementById("weightQuant").value = cfg.analysis.weights.quant;
+                        document.getElementById("wQuant").innerText = Math.round(cfg.analysis.weights.quant * 100);
+                        
+                        document.getElementById("weightFund").value = cfg.analysis.weights.fundamental;
+                        document.getElementById("wFund").innerText = Math.round(cfg.analysis.weights.fundamental * 100);
+                        
+                        document.getElementById("weightSent").value = cfg.analysis.weights.sentiment;
+                        document.getElementById("wSent").innerText = Math.round(cfg.analysis.weights.sentiment * 100);
+                    } catch (e) { alert("Konfigürasyon yüklenirken hata oluştu."); }
+                }
+
+                async function saveConfig(event) {
+                    event.preventDefault();
+                    const payload = {
+                        ceo: {
+                            min_composite_score: parseFloat(document.getElementById("compositeScore").value)
+                        },
+                        risk: {
+                            min_risk_reward_ratio: parseFloat(document.getElementById("minRR").value)
+                        },
+                        analysis: {
+                            weights: {
+                                macro: parseFloat(document.getElementById("weightMacro").value),
+                                quant: parseFloat(document.getElementById("weightQuant").value),
+                                fundamental: parseFloat(document.getElementById("weightFund").value),
+                                sentiment: parseFloat(document.getElementById("weightSent").value)
+                            }
+                        }
+                    };
+
+                    try {
+                        const response = await fetch("/api/config", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(payload)
+                        });
+                        const res = await response.json();
+                        if (res.status === "success") {
+                            alert("Konfigürasyon mühürlendi ve canlıya başarıyla uygulandı!");
+                        } else {
+                            alert("Hata: " + res.message);
+                        }
+                    } catch (e) { alert("Güncelleme başarısız."); }
+                }
             </script>
         </body>
         </html>
