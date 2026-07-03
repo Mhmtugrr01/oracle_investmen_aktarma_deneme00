@@ -136,16 +136,16 @@ async def run_the_oracle(state: OracleState) -> OracleState:
     _nb = sum(1 for x in _b if x in _BULL)
     _ns = sum(1 for x in _b if x in _BEAR)
     # ── 🛡️ DUAL-CONCURRENCE LOOP: YÖN VE SEVİYE MUTABAKATI (R03 Phase 2) ──
-        # CEO yönü, bias oylarına ve kompozit skora göre özgürce mühürler!
-        if _nb > _ns:
-            direction = SignalDirection.LONG
-            _sig_label = "LONG_FIRSAT"
-        elif _ns > _nb:
-            direction = SignalDirection.SHORT
-            _sig_label = "SHORT_FIRSAT"
-        else:
-            direction = SignalDirection.LONG if float(composite) >= 0 else SignalDirection.SHORT
-            _sig_label = "LONG_FIRSAT" if float(composite) >= 0 else "SHORT_FIRSAT"
+    # CEO yönü, bias oylarına ve kompozit skora göre özgürce mühürler!
+    if _nb > _ns:
+        direction = SignalDirection.LONG
+        _sig_label = "LONG_FIRSAT"
+    elif _ns > _nb:
+        direction = SignalDirection.SHORT
+        _sig_label = "SHORT_FIRSAT"
+    else:
+        direction = SignalDirection.LONG if float(composite) >= 0 else SignalDirection.SHORT
+        _sig_label = "LONG_FIRSAT" if float(composite) >= 0 else "SHORT_FIRSAT"
 
     # Veri Şatılını çöz ve CEO'nun seçtiği yöne ait matematiksel seviyeleri yükle!
     entry_val, stop_val, t1_val, t2_val, t3_val, base_rr_val = None, None, None, None, None, None
