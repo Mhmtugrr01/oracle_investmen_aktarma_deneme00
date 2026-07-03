@@ -478,6 +478,17 @@ def calculate_trade_levels(
     t2_rr = abs(t2 - entry_price) / risk if risk > 0 else 0.0
     t3_rr = abs(t3 - entry_price) / risk if risk > 0 else 0.0
 
+    # ── 🛡️ GEOMETRİK TRENDLINE PROJECTION (MSTR Peak / Tepe Saptama Devrimi) ──
+    # Son 30 barın zirvelerinden geçen düşen trend çizgisinin gelecekteki kesişim fiyatını hesaplar.
+    try:
+        recent_highs = df["high"].tail(30).values
+        x_indices = np.arange(len(recent_highs))
+        slope, intercept = np.polyfit(x_indices, recent_highs, 1)
+        # 5 bar sonrasını (index 34) projekte et
+        projected_target = float(slope * 34 + intercept) if slope < 0 else float(entry_price * 1.15)
+    except Exception:
+        projected_target = float(entry_price * 1.15)
+
     return {
         "entry_zone_low": round(entry_zone_low, 8),
         "entry_zone_high": round(entry_zone_high, 8),
@@ -490,6 +501,7 @@ def calculate_trade_levels(
         "t3_rr": round(t3_rr, 2),
         "base_rr": round(t2_rr, 2), # R:R Hedefi T2 (Altın Oran) baz alınır!
         "invalidation_level": round(invalidation_level, 8),
+        "dynamic_trendline_target": round(projected_target, 8), # Geometrik çıkış hedefimiz!
     }
 
 
@@ -767,6 +779,13 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "base_rr": trade_levels["base_rr"],
                 "risk_reward_ratio": trade_levels["base_rr"],
                 "confidence": confidence,
+                "messages": [
+                    f"[QUANT_ENGINE] tf_bias={biases} align={alignment_score:.2f} trade={trade_type} "
+                    f"base_rr={long_levels['base_rr']} hist_score={historical_similarity_score:.1f} "
+                    f"levels={len(levels)} ma_fallback={ma_fallback_used}",
+                    f"[DYNAMIC_TARGET] {trade_levels['dynamic_trendline_target']}", # Geometrik hedef CEO'ya fırlatılıyor!
+                    levels_shuttle
+                ],
                 "trade_type": trade_type,
                 "timeframe_alignment_score": alignment_score,
                 "timeframe_biases": biases,

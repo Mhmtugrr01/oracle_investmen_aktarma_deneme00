@@ -242,9 +242,9 @@ async def run_macro_sentinel(state: OracleState) -> OracleState:
 
         total2_vs_btc = total2_change_7d - btc_change_7d
         if total2_vs_btc > 5.0:
-            warnings.append("ALTCOIN SEZONU BAŞLAYAMIYOR — TOTAL2 BTC'yi geçiyor")
+            warnings.append("🚀 ALTCOIN SEZONU HAREKETLENİYOR — Altcoin performansı BTC'yi geçiyor!")
         elif total2_vs_btc < -5.0:
-            warnings.append("BTC DOMİNANS ARTIŞI — Para BTC'ye akıyor, altcoin riski yüksek")
+            warnings.append("⚠️ BTC DOMİNANS ARTIŞI — Para BTC'ye akıyor, altcoin riski yüksek")
 
         risk_penalty = (1.0 - confidence_modifier) * 100.0
         cross_asset_score = max(
