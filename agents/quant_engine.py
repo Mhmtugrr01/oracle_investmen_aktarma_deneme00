@@ -699,10 +699,11 @@ async def run_quant_engine(state: OracleState) -> OracleState:
         atr = float(atr_series.iloc[-1])
         entry = float(h4_df["close"].iloc[-1])
 
-        signal_direction = "SHORT" if trade_type in ("STRONG_SELL_OR_SHORT", "SHORT_TERM_BOUNCE_ONLY") else "LONG"
-        trade_levels = calculate_trade_levels(
+        # ── 🛡️ DUAL-CONCURRENCE LEVEL GENERATOR (R03 Phase 2) ──
+        # Hem LONG hem SHORT yönleri için seviyeleri bağımsız ve paralel olarak hesaplıyoruz!
+        long_levels = calculate_trade_levels(
             h4_df,
-            signal_direction=signal_direction,
+            signal_direction="LONG",
             entry_price=entry,
             atr=atr,
             stop_loss_multiplier=float(atr_cfg["stop"]),
@@ -710,6 +711,20 @@ async def run_quant_engine(state: OracleState) -> OracleState:
             t2_multiplier=float(atr_cfg["t2"]),
             t3_multiplier=float(atr_cfg["t3"]),
         )
+        
+        short_levels = calculate_trade_levels(
+            h4_df,
+            signal_direction="SHORT",
+            entry_price=entry,
+            atr=atr,
+            stop_loss_multiplier=float(atr_cfg["stop"]),
+            t1_multiplier=float(atr_cfg["t1"]),
+            t2_multiplier=float(atr_cfg["t2"]),
+            t3_multiplier=float(atr_cfg["t3"]),
+        )
+        
+        import json
+        levels_shuttle = f"[LEVELS_DATA] LONG:{json.dumps(long_levels)}|SHORT:{json.dumps(short_levels)}"
 
         historical_df = tf_dfs["1d"] if len(tf_dfs["1d"]) >= 20 else h4_df
         levels, near_hist_level = find_historical_levels(historical_df, lookback_days=500, threshold=0.02)
@@ -763,8 +778,9 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "ma_fallback_used": ma_fallback_used,
                 "messages": [
                     f"[QUANT_ENGINE] tf_bias={biases} align={alignment_score:.2f} trade={trade_type} "
-                    f"base_rr={trade_levels['base_rr']} hist_score={historical_similarity_score:.1f} "
-                    f"levels={len(levels)} ma_fallback={ma_fallback_used}"
+                    f"base_rr={long_levels['base_rr']} hist_score={historical_similarity_score:.1f} "
+                    f"levels={len(levels)} ma_fallback={ma_fallback_used}",
+                    levels_shuttle # Veri Şatılı güvenli mesaj kuyruğuna yükleniyor!
                 ],
             }
         )

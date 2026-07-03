@@ -142,8 +142,42 @@ async def run_the_oracle(state: OracleState) -> OracleState:
         direction = SignalDirection.SHORT
         _sig_label = "SHORT_FIRSAT"
     else:
+        # ── 🛡️ DUAL-CONCURRENCE LOOP: YÖN VE SEVİYE MUTABAKATI (R03 Phase 2) ──
+    _nb = sum(1 for x in _b if x in _BULL)
+    _ns = sum(1 for x in _b if x in _BEAR)
+    
+    # CEO yönü özgürce belirler!
+    if _nb > _ns:
+        direction = SignalDirection.LONG
+        _sig_label = "LONG_FIRSAT"
+    elif _ns > _nb:
+        direction = SignalDirection.SHORT
+        _sig_label = "SHORT_FIRSAT"
+    else:
         direction = SignalDirection.LONG if float(composite) >= 0 else SignalDirection.SHORT
         _sig_label = "LONG_FIRSAT" if float(composite) >= 0 else "SHORT_FIRSAT"
+
+    # Veri Şatılını çöz ve CEO'nun seçtiği yöne ait matematiksel seviyeleri yükle!
+    entry_val, stop_val, t1_val, t2_val, t3_val, base_rr_val = None, None, None, None, None, None
+    for msg in state.messages:
+        if msg.startswith("[LEVELS_DATA]"):
+            try:
+                import json
+                parts = msg.replace("[LEVELS_DATA] ", "").split("|")
+                long_part = parts[0].replace("LONG:", "")
+                short_part = parts[1].replace("SHORT:", "")
+                
+                chosen_data = json.loads(long_part) if direction == SignalDirection.LONG else json.loads(short_part)
+                
+                entry_val = chosen_data["entry_zone_low"]
+                stop_val = chosen_data["stop_loss"]
+                t1_val = chosen_data["t1"]
+                t2_val = chosen_data["t2"]
+                t3_val = chosen_data["t3"]
+                base_rr_val = chosen_data["base_rr"]
+            except Exception as e:
+                logger.error(f"[THE_ORACLE] Şatıl çözme hatası: {e}")
+            break
 
     htf_warnings: list[str] = []
 
@@ -164,16 +198,18 @@ async def run_the_oracle(state: OracleState) -> OracleState:
         update={
             "current_node": AgentNode.THE_ORACLE,
             "status": PipelineStatus.RUNNING,
-            "ceo_approved": True,
-            "ceo_revision_reason": None,
+            "composite_score": composite,
+            "consensus_variance": variance,
+            "confidence": confidence,
             "signal_direction": direction,
             "signal_label": _sig_label,
-            "alpha_signal": alpha,
-            "base_rr": base_rr,
-            "risk_reward_ratio": base_rr,
-            "confidence": _actual_conf,
-            "cross_asset_warnings": merged_warnings,
-            "oracle_summary": f"{_sig_label} | R:R={base_rr:.2f} | Confidence={_actual_conf:.0%}",
-            "messages": [f"[THE_ORACLE] APPROVED rr={base_rr}"] + htf_warnings,
+            "oracle_note": note,
+            "entry_price": entry_val if entry_val is not None else state.entry_price,
+            "stop_loss": stop_val if stop_val is not None else state.stop_loss,
+            "t1": t1_val if t1_val is not None else state.t1,
+            "t2": t2_val if t2_val is not None else state.t2,
+            "t3": t3_val if t3_val is not None else state.t3,
+            "base_rr": base_rr_val if base_rr_val is not None else state.base_rr,
+            "risk_reward_ratio": base_rr_val if base_rr_val is not None else state.base_rr,
         }
     )
