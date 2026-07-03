@@ -143,6 +143,7 @@ async def run_the_oracle(state: OracleState) -> OracleState:
         _sig_label = "SHORT_FIRSAT"
     else:
         # ── 🛡️ DUAL-CONCURRENCE LOOP: YÖN VE SEVİYE MUTABAKATI (R03 Phase 2) ──
+    # ── 🛡️ DUAL-CONCURRENCE LOOP: YÖN VE SEVİYE MUTABAKATI (R03 Phase 2) ──
     _nb = sum(1 for x in _b if x in _BULL)
     _ns = sum(1 for x in _b if x in _BEAR)
     
