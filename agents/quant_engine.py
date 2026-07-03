@@ -1,3 +1,4 @@
+"""
 PROJECT OLYMPUS — DÜĞÜM 2: Kantitatif Teknik Motor (R04_MASTER)
 Sıfır hata politikasına uygun, DatetimeIndex korumalı ve RSI + Hacim Confluence odaklı motor.
 """
