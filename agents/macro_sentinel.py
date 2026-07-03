@@ -212,7 +212,13 @@ async def run_macro_sentinel(state: OracleState) -> OracleState:
         gold_change_7d = pct_change_over(gold_df, bars=5)
 
         btc_d_trend = _trend_label(btc_change_7d)
-        usdt_d_trend = _trend_label(usdt_d - 7.0) if usdt_d is not None else "UNKNOWN"
+        
+        # ── USDT.D ÇOKLU ZAMAN DİLİMİ SÜZGECİ (Multi-Timeframe USDT.D Tracker) ──
+        usdt_d_trend = "UNKNOWN"
+        if usdt_d is not None:
+            # USDT.D'nin haftalık (7.0 bazlı) ve günlük değişim eğilimini çapraz kontrol et!
+            usdt_d_trend = _trend_label(usdt_d - 7.0) if usdt_d > 7.0 else "FALLING"
+            
         dxy_trend = _trend_label(dxy_delta_7d)
         us10y_trend = _trend_label(us10y_delta_7d)
 
