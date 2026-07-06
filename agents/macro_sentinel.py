@@ -336,7 +336,8 @@ async def run_macro_sentinel(state: OracleState) -> OracleState:
                     f"[MACRO_SENTINEL] DXY={dxy_price:.2f} VIX={vix_level:.2f} "
                     f"score={score_0_100:.1f} norm={macro_score:+.3f} "
                     f"btc_d={btc_d_text} usdt_d={usdt_d_text} dxy_trend={dxy_trend} "
-                    f"cross_asset_score={cross_asset_score:.1f}"
+                    f"cross_asset_score={cross_asset_score:.1f}",
+                    f"[USDT_D_MODIFIER] {confidence_modifier}" # Dinamik Güç Çarpanı CEO şatılına yükleniyor!
                 ],
             }
         )

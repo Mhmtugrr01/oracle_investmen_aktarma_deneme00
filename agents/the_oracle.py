@@ -88,16 +88,23 @@ async def run_the_oracle(state: OracleState) -> OracleState:
     if inconsistent or low_rr or low_composite or low_confidence:
         reason_parts = []
         if inconsistent:
-            reason_parts.append(f"ajan skorları tutarsız (consensus_variance={consensus_variance:.2f})")
+            reason_parts.append(f"• Ajan Tutarsızlığı: Ajan kararları arasında yüksek sapma (variance: {consensus_variance:.2f}) saptandı.")
         if low_rr:
-            reason_parts.append(f"R:R yetersiz ({base_rr} < {risk_conf.min_risk_reward_ratio})")
+            reason_parts.append(f"• Yetersiz Asimetri: Mevcut R:R oranı ({base_rr:.1f}), belirlenen minimum asimetri eşiğinin ({risk_conf.min_risk_reward_ratio}) altında.")
         if low_composite:
-            reason_parts.append(f"kompozit skor düşük ({composite:.2f} < {ceo_conf.min_composite_score})")
+            reason_parts.append(f"• Düşük Kompozit Güven: Yapay Zeka kompozit skoru (%{composite*100:.0f}), asgari mühürleme limiti olan (%{ceo_conf.min_composite_score*100:.0f})'un altında.")
         if low_confidence:
-            reason_parts.append(
-                f"güven eşiği düşük ({state.confidence:.2f} < {effective_confidence_threshold})"
-            )
-        reason = " + ".join(reason_parts)
+            reason_parts.append(f"• Güven Sınırı Engeli: Sistem güven oranı (%{state.confidence*100:.0f}), dinamik risk eşiğinin ({effective_confidence_threshold:.2f}) altında kaldı.")
+            
+        # ── 🛡️ ŞEFFAF İPTAL RAPORLAMA PROTOKOLÜ: LİKİDİTE ENGELİ (R03) ──
+        # Eğer USDT.D veya Yen carry-trade baskısı yüzünden kompozit skor ezildiyse şeffafça bildir!
+        for msg in state.messages:
+            if "USDT.D YÜKSELİYOR" in msg:
+                reason_parts.append("• Tether Dominans Engeli: USDT.D yükseliyor, likidite nakde kaçtığı için katsayı tırpanlandı.")
+            if "Japon Yeni" in msg or "Yen" in msg:
+                reason_parts.append("• Küresel Likidite Engeli: JPY/USD carry trade tasfiyesi nedeniyle makro kilit devrede.")
+                
+        reason = "\n".join(reason_parts)
 
         new_retry = state.retry_count + 1
         warn_print(
@@ -148,7 +155,11 @@ async def run_the_oracle(state: OracleState) -> OracleState:
         _sig_label = "LONG_FIRSAT" if float(composite) >= 0 else "SHORT_FIRSAT"
 
     # Veri Şatılını çöz ve CEO'nun seçtiği yöne ait matematiksel seviyeleri yükle!
+    # Veri Şatılını çöz ve CEO'nun seçtiği yöne ait matematiksel seviyeleri yükle!
     entry_val, stop_val, t1_val, t2_val, t3_val, base_rr_val = None, None, None, None, None, None
+    dynamic_target = None
+    usdt_d_modifier = 1.0
+    
     for msg in state.messages:
         if msg.startswith("[LEVELS_DATA]"):
             try:
@@ -167,7 +178,26 @@ async def run_the_oracle(state: OracleState) -> OracleState:
                 base_rr_val = chosen_data["base_rr"]
             except Exception as e:
                 logger.error(f"[THE_ORACLE] Şatıl çözme hatası: {e}")
-            break
+        elif msg.startswith("[DYNAMIC_TARGET]"):
+            try:
+                dynamic_target = float(msg.replace("[DYNAMIC_TARGET] ", ""))
+            except Exception:
+                pass
+        elif msg.startswith("[USDT_D_MODIFIER]"):
+            try:
+                usdt_d_modifier = float(msg.replace("[USDT_D_MODIFIER] ", ""))
+            except Exception:
+                pass
+
+    # ── 🛡️ GEOMETRİK EXIT & TEPE KOKLAMA KONTROLÜ (MSTR Target Devrimi) ──
+    # Eğer fiyat yukarıdan gelen düşen dirence çarpmak üzereyse kâr almayı zorunlu kıl!
+    note = "Piyasa süzgeçleri kararlı. Pozisyon disiplinli risk yönetimiyle anlamlı."
+    if direction == SignalDirection.LONG and dynamic_target is not None and state.entry_price is not None:
+        distance_pct = abs(state.entry_price - dynamic_target) / dynamic_target * 100.0
+        # Fiyat dirence %1.5 yakınsa veya Günlük RSI Negatif Uyumsuzluğu varsa kâr aldır!
+        if distance_pct <= 1.5 or _div_d == "NEGATIVE_DIVERGENCE":
+            _sig_label = "REDUCE_EXPOSURE"
+            note = f"⚠️ DÜŞEN DİRENÇ SINIRINDASINIZ ({dynamic_target:.1f})! RSI negatif uyumsuzluğu var. Kâr alım (Exit) planı devrede."
 
     htf_warnings: list[str] = []
 
