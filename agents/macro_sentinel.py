@@ -216,8 +216,34 @@ async def run_macro_sentinel(state: OracleState) -> OracleState:
         # ── USDT.D ÇOKLU ZAMAN DİLİMİ SÜZGECİ (Multi-Timeframe USDT.D Tracker) ──
         usdt_d_trend = "UNKNOWN"
         if usdt_d is not None:
-            # USDT.D'nin haftalık (7.0 bazlı) ve günlük değişim eğilimini çapraz kontrol et!
             usdt_d_trend = _trend_label(usdt_d - 7.0) if usdt_d > 7.0 else "FALLING"
+            
+        # ── 🇯🇵 USDT.D AYNALAMA KALKANI: ÇOK BOYUTLU REVERSAL ANALİZİ (R03) ──
+        # USDT-USD grafiğinin fiyat ve RSI momentumunu saniyede hesaplar
+        usdt_reversal_detected = False
+        try:
+            usdt_hist = await fetch_stock_macro_data("USDT-USD", period="1mo", interval="1d")
+            if not usdt_hist.empty:
+                usdt_close = usdt_hist["close"]
+                # pandas_ta ile RSI hesapla
+                usdt_rsi_s = ta.rsi(usdt_close, length=14)
+                if usdt_rsi_s is not None and not usdt_rsi_s.empty:
+                    u_price_now = float(usdt_close.iloc[-1])
+                    u_price_prev = float(usdt_close.iloc[-14])
+                    u_rsi_now = float(usdt_rsi_s.iloc[-1])
+                    u_rsi_prev = float(usdt_rsi_s.iloc[-14])
+                    
+                    # 1. Negatif Uyumsuzluk (Zirveden para çıkışı teyidi)
+                    if u_price_now > u_price_prev and u_rsi_now < u_rsi_prev:
+                        usdt_reversal_detected = True
+                        warnings.append("📉 USDT.D AYNALAMA: Negatif Uyumsuzluk Teyit Edildi — Akıllı Para Nakitten Kriptoya Geçiyor!")
+                        
+                    # 2. RSI Direnç Sarkması (RSI 70/75 Zirve Rejection)
+                    if u_rsi_prev > 68.0 and u_rsi_now < 68.0:
+                        usdt_reversal_detected = True
+                        warnings.append("📉 USDT.D AYNALAMA: RSI Direnci Aşağı Kırıldı — Para nakitte kalmıyor!")
+        except Exception as e:
+            logger.warning(f"[USDT.D] Derin aynalama analizi atlandı: {e}")
             
         dxy_trend = _trend_label(dxy_delta_7d)
         us10y_trend = _trend_label(us10y_delta_7d)
@@ -253,12 +279,17 @@ async def run_macro_sentinel(state: OracleState) -> OracleState:
             warnings.append("⚠️ BTC DOMİNANS ARTIŞI — Para BTC'ye akıyor, altcoin riski yüksek")
 
         risk_penalty = (1.0 - confidence_modifier) * 100.0
+        
+        # USDT.D Aynalama bonusunu (Reversal) çapraz skora dahil et!
+        reversal_bonus = 15.0 if usdt_reversal_detected else 0.0
+        
         cross_asset_score = max(
             0.0,
             min(
                 100.0,
                 70.0
                 - risk_penalty
+                + reversal_bonus
                 + (2.0 if (total_market_cap or 0.0) > 0 else -2.0)
                 + (2.0 if gold_change_7d > 0 else 0.0)
                 + (2.0 if total3_change_7d > 0 else 0.0),

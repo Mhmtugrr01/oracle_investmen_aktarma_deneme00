@@ -319,24 +319,47 @@ def _detect_rsi_breakout(df: pd.DataFrame, rsi_col: str = "rsi_14") -> bool:
         
     return False
 
+
+def _detect_rsi_hook(df: pd.DataFrame, rsi_col: str = "rsi_14") -> bool:
+    """RSI'ın 30 çukurundan kafasını yukarı kaldırdığını (hook/reclaim) doğrular."""
+    try:
+        if len(df) < 5 or rsi_col not in df.columns:
+            return False
+        prev_rsi = df[rsi_col].iloc[-2]
+        curr_rsi = df[rsi_col].iloc[-1]
+        return prev_rsi < 30.0 and curr_rsi >= 30.0
+    except Exception:
+        return False
+
+
+def _decide_trade_type(
+    weekly_bias: str, 
+    daily_bias: str, 
+    h4_bias: str, 
+    h1_bias: str, 
+    price_breakout: bool, 
+    rsi_breakout: bool,
+    rsi_hook: bool
+) -> str:
+
 def _decide_trade_type(weekly_bias: str, daily_bias: str, h4_bias: str, h1_bias: str, price_breakout: bool, rsi_breakout: bool) -> str:
     # ── 🛡️ MULTI-TIMEFRAME CONFLUENCE & TRENDLINE BREAKOUT REFORM (R06) ──
     all_biases = [weekly_bias, daily_bias, h4_bias, h1_bias]
     oversold_count = sum(1 for b in all_biases if b == "OVERSOLD")
     
     # Haftalık grafik Bearish (Trend Aşağı) ise alt zaman dilimlerindeki ham alımları KİLİTLE!
-    # Sadece ve sadece fiyatta VEYA RSI'da net bir düşen kırılımı geldiyse oyuna gir!
-    has_breakout = price_breakout or rsi_breakout
+    # Sadece ve sadece fiyatta, RSI'da kırılım VEYA RSI Hook (çukurdan dönüş) geldiyse oyuna gir!
+    has_breakout = price_breakout or rsi_breakout or rsi_hook
     
     # 3 veya daha fazla zaman dilimi oversold + kırılım varsa bu jenerasyonel bir fırsattır!
     if oversold_count >= 3 and has_breakout:
         return "STRONG_LONG_TERM_ENTRY"
         
-    # Günlük grafik oversold ama henüz düşen kırılımı yoksa: ALMA, Pusuya yat!
+    # Günlük grafik oversold ama henüz ne düşen kırılımı ne de RSI Hook var: ALMA, Pusuya yat! (COIN Tuzağı Kalkanı)
     if daily_bias == "OVERSOLD" and not has_breakout:
-        return "AVOID_CONFLICTING_SIGNALS" # "Watchlist_Accumulation_Prep" yerine işleme girmeyi zorla engeller!
+        return "AVOID_CONFLICTING_SIGNALS"
 
-    # Günlük grafik oversold olmuş VEYA trend dönüşü teyit edilmiş + düşen trend kırılmışsa: AL!
+    # Günlük grafik oversold olmuş VEYA trend dönüşü teyit edilmiş + düşen trend kırılmışsa/RSI hook varsa: AL!
     if (daily_bias in ["OVERSOLD", "BULLISH"] or oversold_count >= 1) and has_breakout:
         if weekly_bias == "BEARISH":
             return "SHORT_TERM_BOUNCE_ONLY" # Haftalık düşerken günlük kırılım = tepki alımı
@@ -681,20 +704,24 @@ async def run_quant_engine(state: OracleState) -> OracleState:
 
         price_breakout = _detect_price_breakout(df_local)
         rsi_breakout = _detect_rsi_breakout(df_local, rsi_col="rsi_14")
+        rsi_hook = _detect_rsi_hook(df_local, rsi_col="rsi_14")
         
         trade_type = _decide_trade_type(
             weekly_bias, daily_bias, h4_bias, h1_bias,
-            price_breakout=price_breakout, rsi_breakout=rsi_breakout
+            price_breakout=price_breakout, rsi_breakout=rsi_breakout,
+            rsi_hook=rsi_hook
         )
 
         divergence_daily = _detect_divergence(tf_dfs["1d"], pivot=14) if len(tf_dfs["1d"]) >= 20 else "NONE"
         divergence_weekly = _detect_divergence(tf_dfs["1w"], pivot=8) if len(tf_dfs["1w"]) >= 20 else "NONE"
+        # Evrensel Kalkan: 4 Saatlik Uyumsuzluğu da sisteme dahil et!
+        divergence_h4 = _detect_divergence(tf_dfs["4h"], pivot=14) if len(tf_dfs["4h"]) >= 20 else "NONE"
 
-        # RSI Uyumsuzluk Bonus Hesaplama
+        # RSI Uyumsuzluk Bonus Hesaplama (Multi-Timeframe Divergence Bonus)
         divergence_bonus = 0.0
-        if divergence_daily == "POSITIVE_DIVERGENCE":
+        if "POSITIVE" in divergence_daily or "POSITIVE" in divergence_h4:
             divergence_bonus += 0.12
-        elif divergence_daily == "NEGATIVE_DIVERGENCE":
+        elif "NEGATIVE" in divergence_daily or "NEGATIVE" in divergence_h4:
             divergence_bonus -= 0.12
 
         technical_unit = _technical_unit_from_timeframes(tf_metrics, divergence_bonus)
