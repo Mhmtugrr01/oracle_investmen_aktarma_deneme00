@@ -26,6 +26,17 @@ def custom_log_sink(message):
 
 logger.add(custom_log_sink, format="{time:HH:mm:ss} | {message}")
 
+async def portfolio_tracker_loop():
+    """Her 4 saatte bir aktif işlemlerin fiyatını kontrol edip günceller (R03 Phase 5)."""
+    from core.tracker import update_active_trades
+    while True:
+        try:
+            update_active_trades()
+            logger.info("[TRACKER] Aktif işlemler başarıyla tarandı ve güncellendi.")
+        except Exception as e:
+            logger.error(f"[TRACKER] Aktif işlem güncelleme hatası: {e}")
+        await asyncio.sleep(7200) # 4 saatte bir ( saniye) pusuya yat
+
 handler = None
 
 @asynccontextmanager
@@ -39,7 +50,9 @@ async def lifespan(app: FastAPI):
         else:
             handler = create_handler()
             asyncio.create_task(handler.start())
-            logger.info("[SYSTEM] Telegram bot polling arka plan görevi olarak başarıyla başlatıldı.")
+            # Canlı Portföy takip döngüsünü asenkron olarak tetikle!
+            asyncio.create_task(portfolio_tracker_loop())
+            logger.info("[SYSTEM] Telegram bot polling ve Portföy Takip döngüsü başlatıldı.")
     except Exception as exc:
         logger.error(f"[SYSTEM] Bot başlatma hatası: {exc}")
     yield
@@ -86,7 +99,38 @@ async def save_config(request: Request):
         logger.error(f"[SYSTEM] Config güncelleme hatası: {e}")
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
+@app.get("/api/portfolio")
+def get_portfolio():
+    """Aktif portföy durumunu ve kümülatif win-rate oranlarını web arayüzüne servis eder."""
+    try:
+        from core.tracker import get_performance_stats
+        import sqlite3
+        conn = sqlite3.connect("data/portfolio.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT asset, direction, entry_price, stop_loss, t2, status, pnl, timestamp FROM trades ORDER BY id DESC LIMIT 5")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        trades = []
+        for r in rows:
+            trades.append({
+                "asset": r[0],
+                "direction": r[1],
+                "entry": r[2],
+                "sl": r[3],
+                "t2": r[4],
+                "status": r[5],
+                "pnl": r[6],
+                "date": r[7]
+            })
+            
+        stats = get_performance_stats()
+        return {"status": "success", "stats": stats, "trades": trades}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.get("/", response_class=HTMLResponse)
+
 def read_root():
     """CEO Portföy Başarı ve Durum İzleme Paneli (Apple Dark Mode)."""
     return """
@@ -203,7 +247,7 @@ def read_root():
             </div>
 
             <!-- Grid 2: Detaylar -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
                 <!-- Sol Panel: 5-Sütunlu Kesişim Kriterleri -->
                 <div class="bg-[#111827] p-8 rounded-2xl border border-gray-800">
                     <h3 class="text-xl font-bold text-white mb-6 border-b border-gray-800 pb-3">5-Sütunlu Karar Filtresi</h3>
@@ -248,31 +292,76 @@ def read_root():
 
                 <!-- Sağ Panel: Aktif Portföy Evreni -->
                 <div class="bg-[#111827] p-8 rounded-2xl border border-gray-800 flex flex-col justify-between">
-                    <div>
-                        <h3 class="text-xl font-bold text-white mb-6 border-b border-gray-800 pb-3">İzleme Evreni</h3>
-                        <div class="flex flex-wrap gap-2">
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">BTC</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">ETH</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">INJ</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">RNDR</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">FET</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">COIN</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">NVDA</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">TSLA</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">MSTR</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">THYAO.IS</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">GARAN.IS</span>
-                            <span class="bg-[#1F2937] text-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold">ONS ALTIN</span>
+                    <form id="configForm" class="space-y-4" onsubmit="saveConfig(event)">
+                        <h3 class="text-xl font-bold text-white mb-4 border-b border-gray-800 pb-3">⚙️ İnteraktif Kontrol Paneli</h3>
+                        
+                        <!-- Composite Score Slider -->
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Minimum Kompozit Skor Eşiği: <span id="compositeVal" class="text-white">0.52</span></label>
+                            <input type="range" id="compositeScore" min="0.40" max="0.80" step="0.01" class="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('compositeVal').innerText = this.value">
                         </div>
-                    </div>
-                    <div class="mt-6 border-t border-gray-800 pt-6">
-                        <p class="text-sm text-gray-400">💡 <span class="font-semibold text-white">Yönetici Talimatı:</span> Sistem yön belirsizken uykuda kalır. Sadece 1'e 3 (R:R 3.0) asimetrik fırsat doğduğunda Telegram üzerinden mühürlü sinyal fırlatır.</p>
+                        
+                        <!-- Min RR Input -->
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Minimum Risk-Reward Oranı (R:R)</label>
+                            <input type="number" id="minRR" step="0.1" class="w-full bg-[#05070F] border border-gray-800 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-blue-900">
+                        </div>
+                        
+                        <!-- Ağırlık Sliders -->
+                        <div class="border-t border-gray-800 pt-3 space-y-3">
+                            <h4 class="text-[10px] font-bold text-cyan-400 uppercase">Ajan Karar Ağırlıkları (%)</h4>
+                            <div>
+                                <label class="block text-[9px] text-gray-400 uppercase mb-0.5">Makro Ajanı: <span id="wMacro" class="text-white">15</span>%</label>
+                                <input type="range" id="weightMacro" min="0.0" max="1.0" step="0.05" class="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('wMacro').innerText = Math.round(this.value * 100)">
+                            </div>
+                            <div>
+                                <label class="block text-[9px] text-gray-400 uppercase mb-0.5">Quant & Breakout Ajanı: <span id="wQuant" class="text-white">40</span>%</label>
+                                <input type="range" id="weightQuant" min="0.0" max="1.0" step="0.05" class="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('wQuant').innerText = Math.round(this.value * 100)">
+                            </div>
+                            <div>
+                                <label class="block text-[9px] text-gray-400 uppercase mb-0.5">Temel Analiz (Fundamental) Ajanı: <span id="wFund" class="text-white">25</span>%</label>
+                                <input type="range" id="weightFund" min="0.0" max="1.0" step="0.05" class="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('wFund').innerText = Math.round(this.value * 100)">
+                            </div>
+                            <div>
+                                <label class="block text-[9px] text-gray-400 uppercase mb-0.5">Duygu (Sentiment) Ajanı: <span id="wSent" class="text-white">10</span>%</label>
+                                <input type="range" id="weightSent" min="0.0" max="1.0" step="0.05" class="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('wSent').innerText = Math.round(this.value * 100)">
+                            </div>
+                        </div>
+                        <button type="submit" class="w-full bg-green-900/60 hover:bg-green-800 border border-green-800 text-green-300 font-bold py-2 rounded-lg text-xs transition duration-150 mt-2">KAYDET VE CANLIYA UYGULA</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- ── 🛡️ OLYMPUS CANLI PORTFÖY VE BAŞARI TABLOSU (R03 Phase 5) ── -->
+            <div class="mb-8">
+                <div class="bg-[#111827] rounded-2xl border border-gray-800 p-6">
+                    <h3 class="text-xs font-extrabold text-gray-400 uppercase tracking-wider mb-4">💼 AKTİF PORTFÖY VE CANLI BAŞARI TABLOSU (P&L TRACKER)</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="border-b border-gray-800 text-[10px] text-gray-500 uppercase font-bold">
+                                    <th class="pb-3">Varlık</th>
+                                    <th class="pb-3">Yön</th>
+                                    <th class="pb-3">Giriş Fiyatı</th>
+                                    <th class="pb-3">Stop-Loss</th>
+                                    <th class="pb-3">Hedef (TP2)</th>
+                                    <th class="pb-3">Durum</th>
+                                    <th class="pb-3 text-right">Anlık P&L</th>
+                                </tr>
+                            </thead>
+                            <tbody id="portfolio_table" class="text-xs text-gray-300 divide-y divide-gray-850">
+                                <tr>
+                                    <td colspan="7" class="py-4 text-center text-gray-500">Aktif işlem bulunmuyor, sinyaller bekleniyor...</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
 
             <!-- Footer -->
             <div class="mt-12 text-center text-xs text-gray-500 border-t border-gray-800 pt-6">
+
                 The Oracle R06_MASTER © 2026. Tüm Hakları Saklıdır. Yatırım Tavsiyesi Değildir.
             </div>
         </div>
@@ -300,6 +389,41 @@ def read_root():
                 }
             }
             setInterval(updateLogs, 2000);
+
+            // ── 💼 PORTFOLIO TABLE JAVASCRIPT LOOPER ──
+            async function updatePortfolio() {
+                try {
+                    const response = await fetch("/api/portfolio");
+                    const data = await response.json();
+                    if (data.status === "success" && data.trades && data.trades.length > 0) {
+                        const table = document.getElementById("portfolio_table");
+                        table.innerHTML = data.trades.map(trade => {
+                            let statusColor = "text-yellow-400";
+                            if (trade.status === "WIN") statusColor = "text-green-400 font-bold";
+                            else if (trade.status === "LOSS") statusColor = "text-red-500 font-bold";
+                            
+                            let pnlColor = trade.pnl >= 0 ? "text-green-400" : "text-red-500";
+                            let pnlText = trade.pnl >= 0 ? "+" + trade.pnl + "%" : trade.pnl + "%";
+                            if (trade.status === "ACTIVE") { pnlText = "Açık..."; pnlColor = "text-yellow-400"; }
+
+                            return `
+                                <tr class="border-b border-gray-800/40">
+                                    <td class="py-3 font-bold text-white">${trade.asset}</td>
+                                    <td class="py-3">${trade.direction === "LONG" ? "🟢 LONG" : "🔴 SHORT"}</td>
+                                    <td class="py-3">$${trade.entry.toFixed(2)}</td>
+                                    <td class="py-3 text-red-400">$${trade.sl.toFixed(2)}</td>
+                                    <td class="py-3 text-green-400">$${trade.t2.toFixed(2)}</td>
+                                    <td class="py-3 ${statusColor}">${trade.status}</td>
+                                    <td class="py-3 text-right ${pnlColor} font-bold">${pnlText}</td>
+                                </tr>
+                            `;
+                        }).join("");
+                    }
+                } catch (e) {
+                    console.error("Portföy okuma hatası:", e);
+                }
+            }
+            setInterval(updatePortfolio, 5000); // Her 5 saniyede bir portföy tablosunu tazele!
 
             function updateScoreVal(val) {
                 document.getElementById("score_val").innerText = "%" + Math.round(val * 100);
