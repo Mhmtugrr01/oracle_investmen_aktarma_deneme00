@@ -32,6 +32,11 @@ class OracleScanner:
         self._alert_cooldowns: dict[str, float] = {}  # Anti-Spam Sistemi
         self._last_full_scan: Optional[datetime] = None
         self._running = False
+        # Batch-fetching configuration to avoid rate limits and full-loop failures
+        self._batch_size: int = int(self.scan_config.get("batch_size", 50))
+        self._batch_cooldown: float = float(self.scan_config.get("batch_cooldown_sec", 1.5))
+        # Concurrency limit for per-batch parallel tasks
+        self._concurrency_limit: int = int(self.scan_config.get("concurrency_limit", 8))
 
     async def start(self):
         """Tarayıcıyı başlat — iki paralel döngü çalıştır."""
@@ -76,20 +81,42 @@ class OracleScanner:
         logger.info(f"[SCANNER] Tam tarama başlatılıyor — {len(self._get_all_assets())} varlık")
         opportunities: list[dict] = []
 
-        for category, assets in self.asset_universe.items():
-            for asset in assets:
+        all_categories = list(self.asset_universe.items())
+        sem = asyncio.Semaphore(self._concurrency_limit)
+
+        async def _safe_run(asset: str, category: str):
+            async with sem:
                 try:
-                    result = await self._scan_single_asset(asset, category)
-                    if result and result.get("signal") not in ["AVOID", "WATCH", None]:
-                        opportunities.append(result)
-                        logger.info(
-                            f"[SCANNER] FIRSAT: {asset} → {result['signal']} "
-                            f"(skor: {result.get('composite_pct', 0)}%)"
-                        )
-                    await asyncio.sleep(10)
-                except Exception as exc:
-                    logger.warning(f"[SCANNER] {asset} tarama hatası: {exc}")
-                    continue
+                    return await self._scan_single_asset(asset, category)
+                except Exception as e:
+                    logger.warning(f"[SCANNER] {asset} pipeline hatası (görev düz): {e}")
+                    return None
+
+        for category, assets in all_categories:
+            # chunk assets into batches to avoid rate limits and single-point failures
+            for i in range(0, len(assets), self._batch_size):
+                batch = assets[i : i + self._batch_size]
+                tasks = [asyncio.create_task(_safe_run(a, category)) for a in batch]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for res in results:
+                    try:
+                        if isinstance(res, Exception):
+                            logger.warning(f"[SCANNER] Batch task exception: {res}")
+                            continue
+                        result = res
+                        if result and result.get("signal") not in ["AVOID", "WATCH", None]:
+                            opportunities.append(result)
+                            logger.info(
+                                f"[SCANNER] FIRSAT: {result.get('asset')} → {result.get('signal')} "
+                                f"(skor: {result.get('composite_pct', 0)}%)"
+                            )
+                    except Exception as exc:
+                        logger.warning(f"[SCANNER] Batch result işlenirken hata: {exc}")
+                        continue
+
+                # polite cooldown between batches to reduce rate-limit and remote errors
+                await asyncio.sleep(self._batch_cooldown)
 
         if opportunities:
             await self._send_opportunity_digest(opportunities)

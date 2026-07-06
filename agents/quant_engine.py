@@ -589,6 +589,47 @@ def _technical_unit_from_timeframes(tf: dict[str, dict[str, Any]], divergence_bo
     return float(np.clip(score, 0.0, 1.0))
 
 
+def _compute_kinetic_score(
+    tf: dict[str, dict[str, Any]],
+    atr: float,
+    entry_price: float,
+    whale_score: float | None,
+    divergence_bonus: float,
+) -> float:
+    """Compute the Kinetic composite score (0.0 - 1.0) using:
+    (Momentum_Kinetiği × 0.35) + (Kurumsal_Ayak_İzi × 0.25) +
+    (Uyumsuzluk_Kırılım × 0.25) + (Sıkışma_Volatilitesi × 0.15)
+    """
+    # Momentum_Kinetiği: use technical unit as momentum proxy
+    momentum = _technical_unit_from_timeframes(tf, divergence_bonus)
+
+    # Kurumsal_Ayak_İzi: normalize whale_score (0-100) to 0-1
+    corp = float(whale_score or 0.0) / 100.0
+
+    # Uyumsuzluk_Kırılım: normalize divergence_bonus (-0.12..+0.12) -> (-1..1)
+    # map 0.12 => 1.0
+    div_component = float(np.clip(divergence_bonus / 0.12, -1.0, 1.0))
+    # shift to 0..1
+    div_norm = (div_component + 1.0) / 2.0
+
+    # Sıkışma_Volatilitesi: atr/entry ratio normalized (expected small, cap at 0.1)
+    vol_ratio = 0.0
+    try:
+        vol_ratio = float(atr / entry_price) if entry_price and atr else 0.0
+    except Exception:
+        vol_ratio = 0.0
+    vol_norm = float(np.clip(vol_ratio / 0.10, 0.0, 1.0))
+
+    kinetic = (
+        (momentum * 0.35)
+        + (corp * 0.25)
+        + (div_norm * 0.25)
+        + (vol_norm * 0.15)
+    )
+
+    return float(np.clip(kinetic, 0.0, 1.0))
+
+
 def _neutral_tf_metrics(df: pd.DataFrame | None = None) -> dict[str, Any]:
     price = 0.0
     if df is not None and not df.empty and "close" in df.columns:
@@ -736,6 +777,10 @@ async def run_quant_engine(state: OracleState) -> OracleState:
         atr = float(atr_series.iloc[-1])
         entry = float(h4_df["close"].iloc[-1])
 
+        # Kinetic composite score (new): integrates momentum, whale footprint, divergence and squeeze
+        whale_score = float(getattr(state, "whale_score", 0.0) or 0.0)
+        kinetic_score = _compute_kinetic_score(tf_metrics, atr, entry, whale_score, divergence_bonus)
+
         # ── 🛡️ DUAL-CONCURRENCE LEVEL GENERATOR (R03 Phase 2) ──
         # Hem LONG hem SHORT yönleri için seviyeleri bağımsız ve paralel olarak hesaplıyoruz!
         long_levels = calculate_trade_levels(
@@ -789,6 +834,7 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "current_node": AgentNode.QUANT_ENGINE,
                 "status": PipelineStatus.RUNNING,
                 "quant_score": quant_score,
+                "kinetic_score": kinetic_score,
                 "entry_price": entry,
                 "entry_zone_low": long_levels["entry_zone_low"],
                 "entry_zone_high": long_levels["entry_zone_high"],

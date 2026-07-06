@@ -22,9 +22,15 @@ async def run_the_oracle(state: OracleState) -> OracleState:
     risk_conf = conf.risk
     conf_map = conf.model_dump()
 
+    # Integrate new kinetic score (if present) as a soft augmentation to quant_score
+    kinetic = float(getattr(state, "kinetic_score", 0.0) or 0.0)
+    quant_base = float(getattr(state, "quant_score", 0.0) or 0.0)
+    # conservative blend: 80% original quant_score, 20% kinetic influence
+    quant_combined = (quant_base * 0.80) + (kinetic * 0.20)
+
     scores = [
         state.macro_score,
-        state.quant_score,
+        quant_combined,
         state.whale_score if state.whale_score is not None else 0.0,
         state.fundamental_score,
         state.sentiment_score,
@@ -218,9 +224,9 @@ async def run_the_oracle(state: OracleState) -> OracleState:
         update={
             "current_node": AgentNode.THE_ORACLE,
             "status": PipelineStatus.RUNNING,
-            "composite_score": composite,
-            "consensus_variance": variance,
-            "confidence": confidence,
+                "composite_score": composite,
+                "consensus_variance": consensus_variance,
+                "confidence": state.confidence,
             "signal_direction": direction,
             "signal_label": _sig_label,
             "oracle_note": note,

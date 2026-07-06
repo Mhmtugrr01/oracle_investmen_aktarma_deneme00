@@ -140,7 +140,7 @@ async def end_low_score_node(state: OracleState) -> dict[str, Any]:
             "status": PipelineStatus.ABORTED,
             "fatal_error": reason,
             "signal_label": None,       # EKLENDI: hayalet sinyal temizle
-            "signal_direction": no_trade,   # EKLENDI
+            "signal_direction": None,   # EKLENDI
             "ceo_approved": False,      # EKLENDI
             "messages": [f"[SYSTEM] {reason}"],
         }
