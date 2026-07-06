@@ -1,6 +1,3 @@
-final_state = await task
-                await progress_message.edit_text("""PROJECT OLYMPUS — Telegram matrix bridge (FAZ 5)."""
-
 from __future__ import annotations
 
 import asyncio
@@ -454,29 +451,29 @@ class TelegramHandler:
             await asyncio.sleep(1.25)
 
         final_state = await task
-                
-                # ── 🛡️ PORTFOLIO AUTO-TRACKER HOOK (R03 Phase 5) ──
-                # Onaylanan her başarılı sinyali otomatik olarak SQLite veritabanına kaydeder!
-                status_str = str(final_state.get("status", "")).upper()
-                if "ABORT" not in status_str and "FAIL" not in status_str and not final_state.get("fatal_error"):
-                    try:
-                        from core.tracker import save_signal
-                        save_signal(
-                            asset=final_state.symbol,
-                            direction=str(final_state.signal_direction),
-                            entry=float(final_state.entry_price),
-                            sl=float(final_state.stop_loss),
-                            t1=float(final_state.t1),
-                            t2=float(final_state.t2),
-                            t3=float(final_state.t3)
-                        )
-                    except Exception as e:
-                        logger.error(f"[TELEGRAM] Sinyal veritabanına kaydedilemedi: {e}")
-
-                await progress_message.edit_text(
-                    format_oracle_response(final_state),
-                    disable_web_page_preview=True,
+        
+        # ── 🛡️ PORTFOLIO AUTO-TRACKER HOOK (R03 Phase 5) ──
+        # Onaylanan her başarılı sinyali otomatik olarak SQLite veritabanına kaydeder!
+        status_str = str(final_state.get("status", "")).upper()
+        if "ABORT" not in status_str and "FAIL" not in status_str and not final_state.get("fatal_error"):
+            try:
+                from core.tracker import save_signal
+                save_signal(
+                    asset=final_state.symbol,
+                    direction=str(final_state.signal_direction),
+                    entry=float(final_state.entry_price),
+                    sl=float(final_state.stop_loss),
+                    t1=float(final_state.t1),
+                    t2=float(final_state.t2),
+                    t3=float(final_state.t3)
                 )
+            except Exception as e:
+                logger.error(f"[TELEGRAM] Sinyal veritabanına kaydedilemedi: {e}")
+
+        await progress_message.edit_text(
+            format_oracle_response(final_state),
+            disable_web_page_preview=True,
+        )
 
     async def command_analiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._deny_if_unauthorized(update):
