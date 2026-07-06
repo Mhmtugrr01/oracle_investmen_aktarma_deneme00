@@ -341,8 +341,6 @@ def _decide_trade_type(
     rsi_breakout: bool,
     rsi_hook: bool
 ) -> str:
-
-def _decide_trade_type(weekly_bias: str, daily_bias: str, h4_bias: str, h1_bias: str, price_breakout: bool, rsi_breakout: bool) -> str:
     # ── 🛡️ MULTI-TIMEFRAME CONFLUENCE & TRENDLINE BREAKOUT REFORM (R06) ──
     all_biases = [weekly_bias, daily_bias, h4_bias, h1_bias]
     oversold_count = sum(1 for b in all_biases if b == "OVERSOLD")
@@ -792,27 +790,20 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "status": PipelineStatus.RUNNING,
                 "quant_score": quant_score,
                 "entry_price": entry,
-                "entry_zone_low": trade_levels["entry_zone_low"],
-                "entry_zone_high": trade_levels["entry_zone_high"],
-                "stop_loss": trade_levels["stop_loss"],
-                "take_profit": trade_levels["t1"],
-                "t1": trade_levels["t1"],
-                "t1_rr": trade_levels["t1_rr"],
-                "t2": trade_levels["t2"],
-                "t2_rr": trade_levels["t2_rr"],
-                "t3": trade_levels["t3"],
-                "t3_rr": trade_levels["t3_rr"],
-                "invalidation_level": trade_levels["invalidation_level"],
-                "base_rr": trade_levels["base_rr"],
-                "risk_reward_ratio": trade_levels["base_rr"],
+                "entry_zone_low": long_levels["entry_zone_low"],
+                "entry_zone_high": long_levels["entry_zone_high"],
+                "stop_loss": long_levels["stop_loss"],
+                "take_profit": long_levels["t1"],
+                "t1": long_levels["t1"],
+                "t1_rr": long_levels["t1_rr"],
+                "t2": long_levels["t2"],
+                "t2_rr": long_levels["t2_rr"],
+                "t3": long_levels["t3"],
+                "t3_rr": long_levels["t3_rr"],
+                "invalidation_level": long_levels["invalidation_level"],
+                "base_rr": long_levels["base_rr"],
+                "risk_reward_ratio": long_levels["base_rr"],
                 "confidence": confidence,
-                "messages": [
-                    f"[QUANT_ENGINE] tf_bias={biases} align={alignment_score:.2f} trade={trade_type} "
-                    f"base_rr={long_levels['base_rr']} hist_score={historical_similarity_score:.1f} "
-                    f"levels={len(levels)} ma_fallback={ma_fallback_used}",
-                    f"[DYNAMIC_TARGET] {trade_levels['dynamic_trendline_target']}", # Geometrik hedef CEO'ya fırlatılıyor!
-                    levels_shuttle
-                ],
                 "trade_type": trade_type,
                 "timeframe_alignment_score": alignment_score,
                 "timeframe_biases": biases,
@@ -826,6 +817,7 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                     f"[QUANT_ENGINE] tf_bias={biases} align={alignment_score:.2f} trade={trade_type} "
                     f"base_rr={long_levels['base_rr']} hist_score={historical_similarity_score:.1f} "
                     f"levels={len(levels)} ma_fallback={ma_fallback_used}",
+                    f"[DYNAMIC_TARGET] {long_levels['dynamic_trendline_target']}", # Geometrik hedef şatılı
                     levels_shuttle # Veri Şatılı güvenli mesaj kuyruğuna yükleniyor!
                 ],
             }
