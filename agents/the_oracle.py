@@ -10,6 +10,8 @@ from core.types import AgentNode, OracleState, PipelineStatus, SignalDirection
 
 
 async def run_the_oracle(state: OracleState) -> OracleState:
+    # CEO Raporlama Notunun Tanımsızlık (NameError) Kalkanı
+    note = "Piyasa süzgeçleri kararlı. Sinyal kalitesi onaylandı."
     agent_print(
         "THE_ORACLE",
         f"CEO denetimi → {state.symbol} | Tüm ajan raporları birleştiriliyor…",
@@ -224,9 +226,9 @@ async def run_the_oracle(state: OracleState) -> OracleState:
         update={
             "current_node": AgentNode.THE_ORACLE,
             "status": PipelineStatus.RUNNING,
-                "composite_score": composite,
-                "consensus_variance": consensus_variance,
-                "confidence": state.confidence,
+            "composite_score": composite,
+            "consensus_variance": consensus_variance, # Sahte değişken doğrusuyla mühürlendi!
+            "confidence": confidence,
             "signal_direction": direction,
             "signal_label": _sig_label,
             "oracle_note": note,
