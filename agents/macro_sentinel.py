@@ -4,8 +4,11 @@ import asyncio
 import os
 import aiohttp
 import yfinance as yf
-from loguru import logger
+import pandas as pd
+import numpy as np
+import pandas_ta as ta  # Eksik Kütüphane Mühürlendi!
 
+from loguru import logger
 from core.console import BLUE, CYAN, agent_print, error_print
 from core.types import AgentNode, OracleState, PipelineStatus
 from core.indicators import normalized_from_score

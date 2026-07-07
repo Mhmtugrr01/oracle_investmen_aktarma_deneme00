@@ -1,5 +1,5 @@
 """
-Olympus Oracle — Otomatik Çoklu Varlık Tarayıcı
+PROJECT OLYMPUS — core/scanner.py (The R08 Final-Verdict Edition - True Async & ATR Shield)
 Her 4 saatte bir tüm varlık evrenini tarar.
 Her 15 dakikada bir izleme listesindeki varlıkların
 kritik seviyelere yakınlığını kontrol eder.
@@ -12,6 +12,10 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+import pandas as pd
+import numpy as np
+import pandas_ta as ta
+import yfinance as yf
 from loguru import logger
 
 
@@ -32,14 +36,15 @@ class OracleScanner:
         self._alert_cooldowns: dict[str, float] = {}  # Anti-Spam Sistemi
         self._last_full_scan: Optional[datetime] = None
         self._running = False
+        
         # Batch-fetching configuration to avoid rate limits and full-loop failures
-        self._batch_size: int = int(self.scan_config.get("batch_size", 50))
-        self._batch_cooldown: float = float(self.scan_config.get("batch_cooldown_sec", 1.5))
+        self._batch_size: int = int(self.scan_config.get("batch_size", 40))
+        self._batch_cooldown: float = float(self.scan_config.get("batch_cooldown_sec", 1.7))
         # Concurrency limit for per-batch parallel tasks
         self._concurrency_limit: int = int(self.scan_config.get("concurrency_limit", 8))
 
     async def start(self):
-        """Tarayıcıyı başlat — iki paralel döngü çalıştır."""
+        """Tarayıcıyı başlat — üç paralel döngü çalıştır."""
         self._running = True
         await asyncio.gather(
             self._full_scan_loop(),
@@ -54,7 +59,7 @@ class OracleScanner:
         result: list[str] = []
         for assets in self.asset_universe.values():
             result.extend(assets)
-        return result
+        return list(set(result)) # Çift varlıkları temizle
 
     def _pipeline_state_to_dict(self, state) -> dict:
         if state is None:
@@ -72,51 +77,171 @@ class OracleScanner:
                 "BTC/USDT": "BTC-USD",
                 "ETH/USDT": "ETH-USD",
                 "INJ/USDT": "INJ-USD",
+                "RNDR/USDT": "RNDR-USD",
                 "FET/USDT": "FET-USD",
             }
             return crypto_yf_map.get(token)
         return token
 
+    # =========================================================================
+    # ── ⚔️ OLYMPUS KINETIC SCORING: "PERAKENDE (RETAIL) TUZAGI IMHACISI" ──
+    # =========================================================================
+    def _compute_olympus_kinetic(self, df: pd.DataFrame) -> float:
+        """Momentum Kinetiği, Kurumsal İz, Divergence ve Sıkışmayı süzgeçler."""
+        try:
+            if df is None or len(df) < 25: 
+                return 0.0
+            
+            c_close = "Close" if "Close" in df.columns else "close"
+            c_high = "High" if "High" in df.columns else "high"
+            c_low = "Low" if "Low" in df.columns else "low"
+            c_vol = "Volume" if "Volume" in df.columns else "volume"
+
+            close_s = df[c_close]
+            high_s = df[c_high]
+            low_s = df[c_low]
+            vol_s = df[c_vol]
+
+            # 1. RASYONEL BIÇAK ENGELLEYİCİSİ (RSI-HOOK KALKANI | %35 ETKİ)
+            rsi = ta.rsi(close_s, length=14)
+            if rsi is None or rsi.dropna().empty: return 0.0
+            
+            curr_rsi = float(rsi.iloc[-1])
+            prev_rsi = float(rsi.iloc[-2])
+            
+            if curr_rsi >= 40.0: return 0.0 
+            if curr_rsi <= prev_rsi: return 0.0 
+            
+            momentum_score = 35.0  
+
+            # 2. HİSSİYATSIZ HÜKÜMRAN (Kurumsal İz ve Mum Gerçekliği - CLV | %25 ETKİ)
+            range_val = high_s.iloc[-1] - low_s.iloc[-1]
+            if range_val == 0: range_val = 0.0001
+            clv = ((close_s.iloc[-1] - low_s.iloc[-1]) - (high_s.iloc[-1] - close_s.iloc[-1])) / range_val
+            
+            vol_mean = float(vol_s.tail(20).mean())
+            vol_ratio = float(vol_s.iloc[-1] / vol_mean) if vol_mean > 0 else 1.0
+            
+            smart_money_score = 0.0
+            if clv > 0.4 and vol_ratio > 1.2:
+                smart_money_score = 25.0
+            elif clv > 0.0:
+                smart_money_score = 10.0
+
+            # 3. YANILSAMAYI SÖK (Bullish Divergence Koruması | %25 ETKİ)
+            divergence_score = 0.0
+            min_c = float(close_s.iloc[-6:-1].min())
+            min_r = float(rsi.iloc[-6:-1].min())
+            if close_s.iloc[-1] <= min_c * 1.01 and curr_rsi > min_r:
+                divergence_score = 25.0
+
+            # 4. RUBBER-BAND SIKISMASINA SİNYAL GEÇİŞİ (VOLATILITY COMPRESSION | %15)
+            squeeze_score = 0.0
+            bb = ta.bbands(close_s, length=20, std=2.0)
+            if bb is not None and not bb.empty:
+                bbl = float(bb[[c for c in bb.columns if "BBL" in c][0]].iloc[-1])
+                bbu = float(bb[[c for c in bb.columns if "BBU" in c][0]].iloc[-1])
+                sma = float(bb[[c for c in bb.columns if "BBM" in c][0]].iloc[-1])
+                width_curr = (bbu - bbl) / sma if sma != 0 else 0
+                width_avg = np.mean([
+                    (float(bb[[c for c in bb.columns if "BBU" in c][0]].iloc[-i-1]) - float(bb[[c for c in bb.columns if "BBL" in c][0]].iloc[-i-1])) / float(bb[[c for c in bb.columns if "BBM" in c][0]].iloc[-i-1] or 1)
+                    for i in range(10)
+                ])
+                if width_curr < width_avg * 0.90:
+                    squeeze_score = 15.0
+
+            total_kinetic_power = momentum_score + smart_money_score + divergence_score + squeeze_score
+
+            # ── 🛡️ ATR SHIELD ENTEGRASYONU (R08 Mükemmelleştirme) ──
+            # Günlük bar boyutu, 14 günlük ATR'nin %50'sinin altındaysa sahte hacim cezası uygular.
+            atr_series = ta.atr(high_s, low_s, close_s, length=14)
+            if atr_series is not None and not atr_series.dropna().empty:
+                curr_atr = float(atr_series.iloc[-1])
+                curr_range = float(high_s.iloc[-1] - low_s.iloc[-1])
+                if curr_range < curr_atr * 0.5:
+                    total_kinetic_power -= 20.0
+                    logger.debug(f"[ATR SHIELD] Düşük oynaklık saptandı, ceza uygulandı: -20")
+
+            return max(0.0, total_kinetic_power)
+
+        except Exception as e:
+            return 0.0
+
+    async def _fetch_single_asset_data(self, symbol: str) -> tuple[str, Optional[pd.DataFrame]]:
+        """yfinance indirmesini izole ve thread-safe asenkron olarak çalıştırır."""
+        ticker = symbol.replace("/USDT", "-USD").replace("/USD", "-USD") if "/" in symbol else symbol
+        try:
+            df = await asyncio.to_thread(
+                yf.download, ticker, period="60d", interval="1d", progress=False, auto_adjust=True
+            )
+            return symbol, df
+        except Exception as e:
+            logger.warning(f"[SCANNER] {symbol} veri indirme başarısız: {e}")
+            return symbol, None
+
+    async def _pre_filter_assets(self, target_evren: list[str]) -> list[str]:
+        """Geniş evreni asenkron paralel havuzlarla hızlı ve güvenli süzgeçten geçirir."""
+        logger.info("[SCANNER] TRUE CONCURRENT QUANT MATRIX PROCESSING STARTED...")
+        candidates = []
+        
+        for i in range(0, len(target_evren), self._batch_size):
+            batch = target_evren[i : i + self._batch_size]
+            
+            # ── 🚀 CO-ROUTINE GATHERING (Gerçek Paralel Akış) ──
+            # Batch içindeki tüm varlık indirme işlemleri aynı anda asenkron olarak tetiklenir
+            tasks = [self._fetch_single_asset_data(sym) for sym in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for res in results:
+                if isinstance(res, Exception) or res is None:
+                    continue
+                symbol, df = res
+                if df is None or df.empty:
+                    continue
+                
+                k_score = self._compute_olympus_kinetic(df)
+                if k_score > 0.0:
+                    raw_sym = symbol.replace("-USD", "/USDT")
+                    candidates.append((raw_sym, k_score))
+                    
+            logger.info(f"[SCANNER] Concurrency Batch {(i//self._batch_size)+1} processed successfully.")
+            await asyncio.sleep(self._batch_cooldown)
+
+        sorted_cands = sorted(candidates, key=lambda x: x[1], reverse=True)[:5]
+        return [ass for ass, _ in sorted_cands]
+
+    # =========================================================================
+    # ── ANA TARAMA METODU ──
+    # =========================================================================
     async def _run_scan_once(self):
-        logger.info(f"[SCANNER] Tam tarama başlatılıyor — {len(self._get_all_assets())} varlık")
+        all_assets = self._get_all_assets()
+        logger.info(f"[SCANNER] Tam tarama OLYMPUS KINETIC PROTOKOLÜYLE Başlatıldı — İzlenen Toplam Derinliği: {len(all_assets)} Varlık")
+
+        # ── 🛡️ CO-ROUTINE GATHERING SÜZGECİ (Filtreleme) ──
+        hot_5 = await self._pre_filter_assets(all_assets)
+
+        if not hot_5:
+            logger.info("[SCANNER] Bütün Evren Taranmıştır Ancak Kuant Süzgecine Liyakatle Geçen Asimetrik Pusu Bulunamamıştır! (İptal)")
+            return
+
+        logger.info(f"🔥 Süzgeç İnfazını Geçip MİMAR AI Zırhına (The Oracle) Alınan Sıcak Adaylar: {hot_5}")
+
         opportunities: list[dict] = []
-
-        all_categories = list(self.asset_universe.items())
-        sem = asyncio.Semaphore(self._concurrency_limit)
-
-        async def _safe_run(asset: str, category: str):
-            async with sem:
-                try:
-                    return await self._scan_single_asset(asset, category)
-                except Exception as e:
-                    logger.warning(f"[SCANNER] {asset} pipeline hatası (görev düz): {e}")
-                    return None
-
-        for category, assets in all_categories:
-            # chunk assets into batches to avoid rate limits and single-point failures
-            for i in range(0, len(assets), self._batch_size):
-                batch = assets[i : i + self._batch_size]
-                tasks = [asyncio.create_task(_safe_run(a, category)) for a in batch]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                for res in results:
-                    try:
-                        if isinstance(res, Exception):
-                            logger.warning(f"[SCANNER] Batch task exception: {res}")
-                            continue
-                        result = res
-                        if result and result.get("signal") not in ["AVOID", "WATCH", None]:
-                            opportunities.append(result)
-                            logger.info(
-                                f"[SCANNER] FIRSAT: {result.get('asset')} → {result.get('signal')} "
-                                f"(skor: {result.get('composite_pct', 0)}%)"
-                            )
-                    except Exception as exc:
-                        logger.warning(f"[SCANNER] Batch result işlenirken hata: {exc}")
-                        continue
-
-                # polite cooldown between batches to reduce rate-limit and remote errors
-                await asyncio.sleep(self._batch_cooldown)
+        for asset in hot_5:
+            try:
+                # Sadece süzgeci geçen sıcak 5 varlığı bizim ağır LangGraph pipeline'ına fırlatır!
+                result = await self._scan_single_asset(asset, "KINETIC_ALPHA")
+                if result and result.get("signal") not in ["AVOID", "WATCH", None]:
+                    opportunities.append(result)
+                    logger.info(
+                        f"[SCANNER] FIRSAT ONAYLANDI: {result.get('asset')} → {result.get('signal')} "
+                        f"(skor: {result.get('composite_pct', 0)}%)"
+                    )
+            except Exception as e:
+                logger.error(f"[SCANNER FAIL-SAFE] {asset} pipeline hatası: {e}")
+                continue
+                
+            await asyncio.sleep(2.0)
 
         if opportunities:
             await self._send_opportunity_digest(opportunities)
@@ -126,21 +251,17 @@ class OracleScanner:
         self._last_full_scan = datetime.now(timezone.utc)
 
     async def _full_scan_loop(self):
-        interval_hours = self.scan_config.get("full_scan_interval_hours", 4)
+        interval_hours = self.scan_config.get("full_scan_interval_hours", 12) # Günde 2 Kez Tam Tarama için 12 Saat
         interval_sec = interval_hours * 3600
         await asyncio.sleep(60)
         while self._running:
             try:
                 # Kullanıcı işlemleri çökmesin diye Tarama görevi Event Loop içinden korumaya alınıyor!
-                await asyncio.wait_for(self._run_scan_once(), timeout=900) 
+                await asyncio.wait_for(self._run_scan_once(), timeout=1600) 
             except asyncio.TimeoutError:
-                logger.error("[SCANNER] Tarama süresi 15 dakikayı geçti, döngü zorla atlandı.")
+                logger.error("[SCANNER] Tarama süresi 25 dakikayı geçti, döngü zorla atlandı.")
             except Exception as e:
                 logger.error(f"[SCANNER] Tam tarama hata aldı: {e}")
-            await asyncio.sleep(interval_sec)
-
-        while self._running:
-            await self._run_scan_once()
             await asyncio.sleep(interval_sec)
 
     async def _scan_single_asset(self, asset: str, category: str) -> Optional[dict]:
@@ -233,8 +354,6 @@ class OracleScanner:
                 continue
 
             try:
-                import yfinance as yf
-
                 for asset, levels in list(self._watchlist.items()):
                     try:
                         ticker_symbol = self._ticker_for_watchlist(asset)
@@ -298,7 +417,7 @@ class OracleScanner:
         if not opportunities:
             return
 
-        lines = ["🔍 OLYMPUS ORACLE — TARAMA ÖZETI\n"]
+        lines = ["\n🛡️ 𝗢𝗟𝗬𝗠𝗣𝗨𝗦 𝗢𝗥𝗔𝗖𝗟𝗘 (KİNETİK SÜZGEÇ) NİHAİ KONTROL ODASI\n"]
         lines.append(f"📊 {len(opportunities)} fırsat tespit edildi:\n")
 
         signal_emojis = {
@@ -315,12 +434,10 @@ class OracleScanner:
             emoji = signal_emojis.get(opp["signal"], "⚪")
             rr = f"R:R 1:{opp['base_rr']:.1f}" if opp.get("base_rr") else ""
             lines.append(
-                f"{emoji} {opp['asset']} ({opp['category'].upper()}) — "
-                f"{opp['signal']} | Skor: {opp['composite_pct']}% | {rr}"
+                f"🔥 {opp['asset']} — {opp['signal']} | Puan Onay: {opp['composite_pct']}% | {rr}"
             )
 
-        lines.append("\n💡 Detay için: /oracle [sembol]")
-        lines.append(f"🕐 Tarama: {datetime.now().strftime('%H:%M')}")
+        lines.append(f"⏱ Olympus Fişleniş Tarihi: {datetime.now().strftime('%H:%M')} | /oracle <symbol> Komutu İşleme Hazırdır.")
 
         await self.bot("\n".join(lines))
 
@@ -337,15 +454,7 @@ class OracleScanner:
         # Alarm geçiş izni alındıysa zamanı güncelle
         self._alert_cooldowns[cooldown_key] = current_time
         
-        msg = (
-            f"⚡ OLYMPUS ORACLE — SEVİYE ALARMI\n\n"
-            f"📌 VARLIK: {asset}\n"
-            f"📍 {level_type} {direction}\n"
-            f"💰 Mevcut Fiyat: {current_price:.4f}\n"
-            f"🎯 Kritik Seviye: {level:.4f}\n"
-            f"📏 Mesafe: {abs(current_price - level) / level * 100:.1f}%\n\n"
-            f"🔍 Detay analiz için: /oracle {asset.split('/')[0]}"
-        )
+        msg = f"⚡ PUSULANDI! LIKİDASYON YAKINLAŞTI! \n\n📌 VARLIK: {asset}\n📍 {level_type} {direction}\n💰 Aktif Fiat: {current_price:.4f}\n🎯 Sızma Eşiti: {level:.4f}\n📏 Marj TPay: {abs(current_price - level) / level * 100:.1f}%\n"
         await self.bot(msg)
 
     async def _send_daily_briefing(self):
