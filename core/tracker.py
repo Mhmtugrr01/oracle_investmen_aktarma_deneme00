@@ -13,9 +13,10 @@ DB_PATH = "data/portfolio.db"
 _DB_INITIALIZED = False  # Log kusan optimizasyon yığılmasını susturan Küresel Kilit!
 
 def get_db_connection():
-    """Bağlantıları Paralel ve Çökmez yapmak için Kurumsal DB Süzgeci"""
-    conn = sqlite3.connect(DB_PATH, timeout=30.0) # Lock olma ihtimalinde çökmeyip sırasını 30 saniye bekler.
-    conn.execute("PRAGMA journal_mode=WAL;")      # Yazıcılar (bot) ile Okuyucular (Dashboard) kafa kafaya çarğışmaz. (Master Sır)
+    """Bağlantıları Paralel ve Çökmez yapmak için Kurumsal DB Süzgeci (Auto-Init)"""
+    init_db() # Matematiksel Güvence: Tabloların varlığını her bağlantıda sessizce kontrol eder!
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")    
     return conn
 

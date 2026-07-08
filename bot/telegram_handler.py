@@ -446,14 +446,35 @@ class TelegramHandler:
 
         step_idx = 0
         while not task.done():
-            await progress_message.edit_text(_PROGRESS_STEPS[step_idx % len(_PROGRESS_STEPS)])
+            try:
+                # ── 🛡️ ANTI-SPAM PROTECTION ──
+                # Telegram'ın bizi spam/rate-limit ile kitlemesini engellemek için try-except içine alıyoruz!
+                await progress_message.edit_text(_PROGRESS_STEPS[step_idx % len(_PROGRESS_STEPS)])
+            except Exception:
+                pass # Telegram hata verse bile döngüyü bozma, sessizce devam et!
             step_idx += 1
-            await asyncio.sleep(1.25)
+            await asyncio.sleep(3.0) # Hızı 3 saniyeye düşürerek Telegram sınırlarına tam uyum sağlıyoruz!
 
-        final_state = await task
-        
+        # ── 🛡️ TITANIUM EXCEPTION SHIELD (Görev Çökmesini veya Sınırsız Askıda Kalmayı Engelleyen VIP Kalkan) ──
+        try:
+            import asyncio
+            # Hiçbir dış güç ve gecikme OLYMPUS MOTORU'NU 90 Saniyeden Fazla Rehin Alamaz! ZORLA ŞATILI ÇEK!
+            final_state = await asyncio.wait_for(task, timeout=90.0)
+        except asyncio.TimeoutError:
+            fail_str = "⏱️ OLYMPUS ACİL ZİRVE UYARISI:\n\nHedef Ajanlardan (Data / LLM) VIP Limit Sınırları aşılmıştır (Askıda kalındı!). " \
+                       "Bunu fon cüzdanına yansıtarak risk almak Kurumsal Yapıya yasaktır. Mühür Koparıldı. Sistemsel Donukluk Atlandı ve Emriniz Tasfiye Edildi! Lütfen biraz sonra Olympos'a tekrar istek atın."
+            await progress_message.edit_text(f"❌ BAĞLANTI İPTAL PROTOKOLÜ\n\n{fail_str}", disable_web_page_preview=True)
+            logger.error("[TELEGRAM VETO] 90sn Sorgu Aşımı Bypass edildi ve sonsuz ölüm (hang) önlendi.")
+            return
+        except Exception as critical_crash:
+            # Görünmeyen YFinance ve DB patlamaları eskisi gibi sistemi sonsuza kadar komaya sokmasın. Kusur varsa Teyidini bassın.
+            crash_err = f"💥 FATAL DONANIM SİNYALİ:\n\nMükemmellik süzgecine beklenmeyen darboğaz veya verisizlik tırmandı:\n({critical_crash})\nOlympus Ana Fonksiyona Güvenliği sağlamış ve İşlemin Cüzdana sızmasını kitlemiştir."
+            await progress_message.edit_text(f"❌ KORUMA KESİCİ DEVREDE\n\n{crash_err}", disable_web_page_preview=True)
+            logger.error(f"[TELEGRAM CORE CRASH] Ölümcül Sessizlik (Exception) VURULDU -> {critical_crash}")
+            return
+
         # ── 🛡️ PORTFOLIO AUTO-TRACKER HOOK (R03 Phase 5) ──
-        # Onaylanan her başarılı sinyali otomatik olarak SQLite veritabanına kaydeder!
+        # Normal, kazasız onay süreci:
         status_str = str(final_state.get("status", "")).upper()
         if "ABORT" not in status_str and "FAIL" not in status_str and not final_state.get("fatal_error"):
             try:
