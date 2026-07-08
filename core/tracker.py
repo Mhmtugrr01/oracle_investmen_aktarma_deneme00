@@ -13,10 +13,9 @@ DB_PATH = "data/portfolio.db"
 _DB_INITIALIZED = False  # Log kusan optimizasyon yığılmasını susturan Küresel Kilit!
 
 def get_db_connection():
-    """Bağlantıları Paralel ve Çökmez yapmak için Kurumsal DB Süzgeci (Auto-Init)"""
-    init_db() # Matematiksel Güvence: Tabloların varlığını her bağlantıda sessizce kontrol eder!
-    conn = sqlite3.connect(DB_PATH, timeout=30.0)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    """Bağlantıları Paralel ve Çökmez yapmak için Kurumsal DB Süzgeci"""
+    conn = sqlite3.connect(DB_PATH, timeout=30.0) # Lock olma ihtimalinde çökmeyip sırasını 30 saniye bekler.
+    conn.execute("PRAGMA journal_mode=WAL;")      # Yazıcılar (bot) ile Okuyucular (Dashboard) kafa kafaya çarğışmaz. (Master Sır)
     conn.execute("PRAGMA synchronous=NORMAL;")    
     return conn
 
@@ -52,6 +51,7 @@ def init_db() -> None:
         logger.error(f"[TRACKER CORE] Başlatma Felaketi: {e}")
 
 def save_signal(asset: str, direction: str, entry: float, sl: float, t1: float, t2: float, t3: float) -> None:
+    init_db() # 🛡️ Güvence Altına Alındı! Gürültü Çıkarmaz!
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -63,6 +63,7 @@ def save_signal(asset: str, direction: str, entry: float, sl: float, t1: float, 
     logger.info(f"💎 [TRADE VAULT] {asset} -> {direction} | Portföye VIP Onaylı Yazıldı!")
 
 def update_active_trades() -> None:
+    init_db() # 🛡️ Güvence Altına Alındı! Tabloyu Kontrol Etmeden Başlamaz!
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -107,6 +108,7 @@ def update_active_trades() -> None:
     conn.close()
 
 def get_performance_stats() -> dict:
+    init_db() # 🛡️ Güvence Altına Alındı! Dashboard Crash Kalkanı!
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'WIN'")

@@ -444,33 +444,34 @@ class TelegramHandler:
             self._run_pipeline(symbol=symbol, user_id=user_id, chat_id=chat_id, query=query)
         )
 
+        # ── 🛡️ ZAMAN AYARLI ZORUNLU EŞİK (REAL TIMEOUT LOOP) ──
+        import time
+        start_time = time.time()
         step_idx = 0
+        
+        # Animasyon devam etsin diye while döngüsünü zorla 90 Saniyeye Kilitledim! (Şu an Koma Riski 0'dır)
         while not task.done():
-            try:
-                # ── 🛡️ ANTI-SPAM PROTECTION ──
-                # Telegram'ın bizi spam/rate-limit ile kitlemesini engellemek için try-except içine alıyoruz!
-                await progress_message.edit_text(_PROGRESS_STEPS[step_idx % len(_PROGRESS_STEPS)])
-            except Exception:
-                pass # Telegram hata verse bile döngüyü bozma, sessizce devam et!
+            if time.time() - start_time > 90.0:
+                task.cancel()  # İçeride ölü yatıyorsa İptali Kes ve çık!
+                break
+                
+            await progress_message.edit_text(_PROGRESS_STEPS[step_idx % len(_PROGRESS_STEPS)])
             step_idx += 1
-            await asyncio.sleep(3.0) # Hızı 3 saniyeye düşürerek Telegram sınırlarına tam uyum sağlıyoruz!
+            await asyncio.sleep(1.25)
 
-        # ── 🛡️ TITANIUM EXCEPTION SHIELD (Görev Çökmesini veya Sınırsız Askıda Kalmayı Engelleyen VIP Kalkan) ──
+        # ── 🛡️ TITANIUM EXCEPTION SHIELD (HATA SÖKÜCÜ MİMARİ) ──
         try:
-            import asyncio
-            # Hiçbir dış güç ve gecikme OLYMPUS MOTORU'NU 90 Saniyeden Fazla Rehin Alamaz! ZORLA ŞATILI ÇEK!
-            final_state = await asyncio.wait_for(task, timeout=90.0)
+            if task.cancelled():
+                raise asyncio.TimeoutError()
+            final_state = task.result()
         except asyncio.TimeoutError:
-            fail_str = "⏱️ OLYMPUS ACİL ZİRVE UYARISI:\n\nHedef Ajanlardan (Data / LLM) VIP Limit Sınırları aşılmıştır (Askıda kalındı!). " \
-                       "Bunu fon cüzdanına yansıtarak risk almak Kurumsal Yapıya yasaktır. Mühür Koparıldı. Sistemsel Donukluk Atlandı ve Emriniz Tasfiye Edildi! Lütfen biraz sonra Olympos'a tekrar istek atın."
+            fail_str = "⏱️ OLYMPUS ACİL ZİRVE UYARISI:\n\nHedef Ajanlardan (Data/LLM) dönüş kilitlenmiş, API Asılı Kalmıştır!\nAsimetrik Kurallara aykırı olduğu için Sistem Risk Almamak Üzere Operasyonu İnfaz Etmiştir."
             await progress_message.edit_text(f"❌ BAĞLANTI İPTAL PROTOKOLÜ\n\n{fail_str}", disable_web_page_preview=True)
-            logger.error("[TELEGRAM VETO] 90sn Sorgu Aşımı Bypass edildi ve sonsuz ölüm (hang) önlendi.")
+            logger.error("[TELEGRAM VETO] 90 Saniye Cıdar aşıldığı için Ölümcül (hang) Zorla Çıkış Vuruldu.")
             return
         except Exception as critical_crash:
-            # Görünmeyen YFinance ve DB patlamaları eskisi gibi sistemi sonsuza kadar komaya sokmasın. Kusur varsa Teyidini bassın.
-            crash_err = f"💥 FATAL DONANIM SİNYALİ:\n\nMükemmellik süzgecine beklenmeyen darboğaz veya verisizlik tırmandı:\n({critical_crash})\nOlympus Ana Fonksiyona Güvenliği sağlamış ve İşlemin Cüzdana sızmasını kitlemiştir."
-            await progress_message.edit_text(f"❌ KORUMA KESİCİ DEVREDE\n\n{crash_err}", disable_web_page_preview=True)
-            logger.error(f"[TELEGRAM CORE CRASH] Ölümcül Sessizlik (Exception) VURULDU -> {critical_crash}")
+            crash_err = f"💥 FATAL SİSTEM DONANIMI: Pazar İzinlerinden Verisizlik ve Sıkışma Patlak Verdi:\n({critical_crash})\nMühürler kapalıdır."
+            await progress_message.edit_text(f"❌ KORUMA KESİCİ\n\n{crash_err}", disable_web_page_preview=True)
             return
 
         # ── 🛡️ PORTFOLIO AUTO-TRACKER HOOK (R03 Phase 5) ──
