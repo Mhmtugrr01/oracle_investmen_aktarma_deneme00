@@ -107,7 +107,6 @@ async def run_red_team(state: OracleState) -> OracleState:
             }
         )
 
-    llm_timeout = min(float(conf.llm.timeout_seconds), 20.0)
     llm_fallback_used = False
     try:
         llm_verdict = await asyncio.wait_for(
@@ -121,13 +120,13 @@ async def run_red_team(state: OracleState) -> OracleState:
                 ),
                 user_prompt=_build_red_team_prompt(state, consensus_variance),
             ),
-            timeout=llm_timeout,
+            timeout=20.0,
         )
     except Exception as llm_exc:
         llm_fallback_used = True
         agent_print(
             "RED_TEAM",
-            f"LLM yanıtı alınamadı ({llm_exc}); kural bazlı fallback onayı devrede.",
+            f"LLM ulaşılamadı ({type(llm_exc).__name__}); kural bazlı fallback onayı devrede.",
             YELLOW,
         )
         llm_verdict = RedTeamVerdict(

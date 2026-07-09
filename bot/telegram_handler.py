@@ -12,7 +12,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 from core.config import get_oracle_config_cached, load_oracle_config
 from core.graph import compile_oracle_graph
-from core.types import OracleState, SignalDirection
+from core.types import OracleState, PipelineStatus, SignalDirection
 
 _PROGRESS_STEPS: Final[list[str]] = [
     "Agent 1: Makro tarama başlatıldı...",
@@ -24,12 +24,26 @@ _PROGRESS_STEPS: Final[list[str]] = [
     "The Oracle: Nihai direktif üretiliyor...",
 ]
 
+_RESERVED_ORACLE_TOKENS: Final[set[str]] = {
+    "TARAMA",
+    "SCAN",
+    "ALL",
+    "TUM",
+    "TÜM",
+    "LISTE",
+    "LIST",
+    "HELP",
+    "YARDIM",
+}
+
 
 def _normalize_symbol(raw: str) -> str:
     # ── GÜVENLİK VE ARINDIRMA SÜZGECİ (Sanitizer v2.0) ──
     token = raw.strip().replace("[", "").replace("]", "").replace("{", "").replace("}", "").replace("$", "").replace(" ", "").upper()
     if not token:
         return "BTC/USDT"
+    if token in _RESERVED_ORACLE_TOKENS:
+        return "__SCAN__"
         
     # Eğer kullanıcı zaten "FETUSDT" yazdıysa sondaki "USDT"yi kırp (FETUSDT/USDT hatasını engelle!)
     if token.endswith("USDT") and "/" not in token:
@@ -466,6 +480,13 @@ class TelegramHandler:
         if not update.effective_message:
             return
         symbol = _normalize_symbol(context.args[0] if context.args else "BTC")
+        if symbol == "__SCAN__":
+            await update.effective_message.reply_text(
+                "⚠️ /oracle yalnızca tek sembol analizi içindir.\n\n"
+                "Kullanım: /oracle BTC | /oracle ETH | /oracle NVDA\n"
+                "21 varlık tam tarama için: /tarama"
+            )
+            return
 
         progress_message = await update.effective_message.reply_text(
             f"/oracle {symbol} ateşlendi. Sistem hazırlanıyor..."
@@ -712,7 +733,21 @@ class TelegramHandler:
             user_id=user_id,
             chat_id=chat_id,
         )
-        raw_result = await self._graph.ainvoke(initial_state)
+        try:
+            raw_result = await asyncio.wait_for(
+                self._graph.ainvoke(initial_state),
+                timeout=300.0,
+            )
+        except asyncio.TimeoutError:
+            return OracleState(
+                query=query,
+                symbol=symbol,
+                user_id=user_id,
+                chat_id=chat_id,
+                status=PipelineStatus.ABORTED,
+                fatal_error=f"{symbol} analizi 5 dakika limitini aştı — API yanıtsız.",
+                signal_direction=SignalDirection.NO_TRADE,
+            )
         if isinstance(raw_result, OracleState):
             return raw_result
         return OracleState.model_validate(raw_result)
