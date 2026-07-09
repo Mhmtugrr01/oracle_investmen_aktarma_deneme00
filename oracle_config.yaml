@@ -22,7 +22,7 @@ ceo:
   min_composite_score: 0.52
   confidence_threshold: 0.50
   confidence_boost: 0.25
-  max_retries: 3
+  max_retries: 1
 
 red_team:
   black_swan_spread: 1.20

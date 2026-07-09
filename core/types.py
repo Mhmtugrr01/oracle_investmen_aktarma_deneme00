@@ -230,6 +230,16 @@ class OracleState(BaseModel):
         elif hist >= 75.0 and pattern_bias == "HISTORICALLY_BEARISH":
             score -= 0.04
 
+        # ── Extreme Fear / Greed Contrarian Bonusu ──────────────────────
+        # F&G < 25 → tarihsel birikim zonu → sistematik contrarian fırsat
+        # Şu an -0.34 sentiment olarak composite'i düşürüyor; bu bunu dengeler
+        fg = self.fear_greed_value
+        if fg is not None:
+            if int(fg) <= 25:
+                score += 0.06   # Extreme Fear = tarihsel alım bölgesi
+            elif int(fg) >= 75:
+                score -= 0.04   # Extreme Greed = dikkat
+
         return round(max(0.0, min(1.0, score)), 4)
 
     @property
