@@ -49,7 +49,8 @@ def _to_100_from_norm(score: float) -> float:
 
 
 def _format_percent_from_norm(score: float) -> str:
-    return f"%{_to_100_from_norm(score):.1f}"
+    value = 0.0 if score is None else float(score)
+    return f"%{_to_100_from_norm(value):.1f}"
 
 
 def _format_price(value: float | None) -> str:
@@ -61,7 +62,9 @@ def _format_price(value: float | None) -> str:
     return f"${rounded:,.2f}"
 
 
-def _macro_label(score: float) -> str:
+def _macro_label(score: float | None) -> str:
+    if score is None:
+        return "Veri Yok"
     if score >= 0.35:
         return "Güçlü"
     if score >= 0.1:
@@ -73,7 +76,9 @@ def _macro_label(score: float) -> str:
     return "Dengeli"
 
 
-def _whale_label(score: float) -> str:
+def _whale_label(score: float | None) -> str:
+    if score is None:
+        return "Veri Yok"
     if score >= 0.35:
         return "Birikim"
     if score >= 0.1:
@@ -85,7 +90,9 @@ def _whale_label(score: float) -> str:
     return "Nötr"
 
 
-def _technical_label(score: float) -> str:
+def _technical_label(score: float | None) -> str:
+    if score is None:
+        return "Veri Yok"
     if score >= 0.45:
         return "Güçlü Yükseliş"
     if score >= 0.15:
@@ -108,10 +115,13 @@ def _oracle_label(direction: SignalDirection) -> str:
 
 
 def _build_area_context(state: OracleState) -> str:
+    macro_score = state.macro_score
+    whale_score = state.whale_score
+    quant_score = state.quant_score
     return (
-        f"Makro Koşullar {_macro_label(state.macro_score)} 🌐 ({_format_percent_from_norm(state.macro_score)}) | "
-        f"Balina Aktivitesi: {_whale_label(state.whale_score)} 🐋 ({_format_percent_from_norm(state.whale_score)}) | "
-        f"Teknik Eğilim: {_technical_label(state.quant_score)} 📉 ({_format_percent_from_norm(state.quant_score)})"
+        f"Makro Koşullar {_macro_label(macro_score)} 🌐 ({_format_percent_from_norm(macro_score)}) | "
+        f"Balina Aktivitesi: {_whale_label(whale_score)} 🐋 ({_format_percent_from_norm(whale_score)}) | "
+        f"Teknik Eğilim: {_technical_label(quant_score)} 📉 ({_format_percent_from_norm(quant_score)})"
     )
 
 
@@ -488,7 +498,14 @@ class TelegramHandler:
         try:
             if task.cancelled():
                 raise asyncio.TimeoutError()
-            final_state = task.result()
+            final_state = await task
+            if not isinstance(final_state, OracleState):
+                final_state = OracleState.model_validate(final_state)
+        except asyncio.CancelledError:
+            fail_str = "⏱️ OLYMPUS ACİL ZİRVE UYARISI:\n\nAnaliz görevi zaman aşımı nedeniyle iptal edildi."
+            await progress_message.edit_text(f"❌ BAĞLANTI İPTAL PROTOKOLÜ\n\n{fail_str}", disable_web_page_preview=True)
+            logger.error("[TELEGRAM VETO] Görev iptal edildi (CancelledError).")
+            return
         except asyncio.TimeoutError:
             fail_str = "⏱️ OLYMPUS ACİL ZİRVE UYARISI:\n\nHedef Ajanlardan (Data/LLM) dönüş kilitlenmiş, API Asılı Kalmıştır!\nAsimetrik Kurallara aykırı olduğu için Sistem Risk Almamak Üzere Operasyonu İnfaz Etmiştir."
             await progress_message.edit_text(f"❌ BAĞLANTI İPTAL PROTOKOLÜ\n\n{fail_str}", disable_web_page_preview=True)
@@ -501,26 +518,35 @@ class TelegramHandler:
 
         # ── 🛡️ PORTFOLIO AUTO-TRACKER HOOK (R03 Phase 5) ──
         # Normal, kazasız onay süreci:
-        status_str = str(final_state.get("status", "")).upper()
-        if "ABORT" not in status_str and "FAIL" not in status_str and not final_state.get("fatal_error"):
+        status_str = str(final_state.status.value).upper()
+        if "ABORT" not in status_str and "FAIL" not in status_str and not final_state.fatal_error:
             try:
                 from core.tracker import save_signal
-                save_signal(
-                    asset=final_state.symbol,
-                    direction=str(final_state.signal_direction),
-                    entry=float(final_state.entry_price),
-                    sl=float(final_state.stop_loss),
-                    t1=float(final_state.t1),
-                    t2=float(final_state.t2),
-                    t3=float(final_state.t3)
-                )
+                if all(v is not None for v in (final_state.entry_price, final_state.stop_loss, final_state.t1, final_state.t2, final_state.t3)):
+                    save_signal(
+                        asset=final_state.symbol,
+                        direction=str(final_state.signal_direction),
+                        entry=float(final_state.entry_price),
+                        sl=float(final_state.stop_loss),
+                        t1=float(final_state.t1),
+                        t2=float(final_state.t2),
+                        t3=float(final_state.t3),
+                    )
             except Exception as e:
                 logger.error(f"[TELEGRAM] Sinyal veritabanına kaydedilemedi: {e}")
 
-        await progress_message.edit_text(
-            format_oracle_response(final_state),
-            disable_web_page_preview=True,
-        )
+        try:
+            await progress_message.edit_text(
+                format_oracle_response(final_state),
+                disable_web_page_preview=True,
+            )
+        except Exception as exc:
+            logger.error(f"[TELEGRAM] Nihai mesaj gönderimi başarısız: {exc}")
+            await progress_message.edit_text(
+                f"⚠️ {symbol} analizi tamamlandı ancak çıktı mesajı üretilemedi.\n"
+                f"Hata: {str(exc)[:300]}",
+                disable_web_page_preview=True,
+            )
 
     async def command_analiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._deny_if_unauthorized(update):
