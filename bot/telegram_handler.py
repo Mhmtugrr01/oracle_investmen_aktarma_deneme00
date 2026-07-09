@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
+from pathlib import Path
 from typing import Final
 
 from loguru import logger
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-from core.config import load_oracle_config
+from core.config import get_oracle_config_cached, load_oracle_config
 from core.graph import compile_oracle_graph
 from core.types import OracleState, SignalDirection
 
@@ -161,6 +163,18 @@ def _format_abort_message(state: OracleState, reason: str) -> str:
     alignment = float(state.timeframe_alignment_score or 0.0)
     alignment_pct = int(alignment * 100)
 
+    min_composite = 0.60
+    min_confidence = 0.60
+    min_rr = 3.0
+    try:
+        conf = get_oracle_config_cached()
+        min_composite = float(conf.ceo.min_composite_score)
+        min_confidence = float(conf.ceo.confidence_threshold)
+        min_rr = float(conf.risk.min_risk_reward_ratio)
+    except Exception:
+        # Config cache hazır değilse güvenli varsayılanları koru.
+        pass
+
     scores = [state.macro_score, state.quant_score, state.fundamental_score, state.sentiment_score]
     if state.whale_score is not None:
         scores.append(state.whale_score)
@@ -181,21 +195,21 @@ def _format_abort_message(state: OracleState, reason: str) -> str:
     if hist_bias and hist_score is not None:
         hist_text = f"\n🔄 Tarihsel Benzerlik: {int(hist_score)}/100 → {hist_bias}"
 
-    if "KOMPOZİT" in reason or composite < 0.60:
+    if "KOMPOZİT" in reason or composite < min_composite:
         neden = (
-            f"Kompozit skor {composite_pct}% (minimum 60% gerekli). "
+            f"Kompozit skor {composite_pct}% (minimum {int(min_composite * 100)}% gerekli). "
             f"Ajanlar arası fikir ayrılığı yüksek (variance: {consensus_variance:.2f}). "
             f"Timeframe'ler hizalanmamış ({alignment_pct}%)."
         )
-    elif "GÜVEN" in reason or confidence < 0.60:
+    elif "GÜVEN" in reason or confidence < min_confidence:
         neden = (
-            f"Sistem güven skoru {confidence_pct}% (minimum 60% gerekli). "
+            f"Sistem güven skoru {confidence_pct}% (minimum {int(min_confidence * 100)}% gerekli). "
             f"Sinyalin güvenilirliği yetersiz."
         )
     elif "R:R" in reason:
         rr_val = f"{base_rr:.2f}" if base_rr is not None else "hesaplanamadı"
         neden = (
-            f"Risk/Ödül oranı {rr_val} (minimum 3.0 gerekli). "
+            f"Risk/Ödül oranı {rr_val} (minimum {min_rr:.1f} gerekli). "
             f"Bu kurulum asimetrik getiri sunmuyor."
         )
     else:
@@ -214,14 +228,15 @@ def _format_abort_message(state: OracleState, reason: str) -> str:
 {neden}
 
 📊 MEVCUT DURUM:
-  Kompozit Skor : {composite_pct}%  (eşik: 60%)
-  Sistem Güveni : {confidence_pct}%  (eşik: 60%)
+    Kompozit Skor : {composite_pct}%  (eşik: {int(min_composite * 100)}%)
+    Sistem Güveni : {confidence_pct}%  (eşik: {int(min_confidence * 100)}%)
   Ajan Uyumu    : {alignment_pct}%  ({alignment_tf_count}/4 TF hizalı)
   Ajan Tutarlılık: {consistency_pct}%  (yüksek = iyi)
+    Ajan Skorları  : Makro {state.macro_score:+.2f} | Quant {state.quant_score:+.2f} | Fundamental {state.fundamental_score:+.2f} | Sentiment {state.sentiment_score:+.2f}
 """
 
     if base_rr is not None:
-        msg += f"\n  R:R Oranı     : {rr_display}  (eşik: 3.0)"
+        msg += f"\n  R:R Oranı     : {rr_display}  (eşik: {min_rr:.1f})"
     if trade_type != "BILINMIYOR":
         msg += f"\n  Trade Tipi    : {trade_type}"
     if macro_score:
@@ -353,7 +368,16 @@ def format_oracle_response(state: OracleState) -> str:
         level_lines.append(f"   ├ Hedef 2 (T2): ${state.t2:.4f}  [R:R 1:{state.t2_rr:.1f}]")
     if state.t3 is not None and state.t3_rr is not None:
         level_lines.append(f"   └ Hedef 3 (T3): ${state.t3:.4f}  [R:R 1:{state.t3_rr:.1f}] ← Uzun Vade")
+    fib_lines = []
+    if state.fib_382 is not None and state.fib_500 is not None and state.fib_618 is not None:
+        fib_lines = [
+            "\n🎯 ALIM BÖLGELERİ (FIBONACCI):",
+            f"   0.382 → ${state.fib_382:.4f} (İlk destek)",
+            f"   0.500 → ${state.fib_500:.4f} (Güçlü destek)",
+            f"   0.618 → ${state.fib_618:.4f} ⭐ (Altın oran)",
+        ]
     level_block = "\n".join(level_lines) if level_lines else "   - Seviye hesaplanamadı"
+    fib_block = "\n".join(fib_lines)
 
     return (
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -381,6 +405,7 @@ def format_oracle_response(state: OracleState) -> str:
         f"   Tarihsel Eğilim: {state.pattern_outcome_bias or 'N/A'}\n\n"
         "🎯 İŞLEM SEVİYELERİ:\n"
         f"{level_block}\n\n"
+        f"{fib_block}\n\n"
         "💡 CEO ANALİZİ:\n"
         f"\"{manager_summary}\"\n\n"
         "⚔️ KATİL SAVCI:\n"
@@ -422,7 +447,7 @@ class TelegramHandler:
         await update.effective_message.reply_text(
             "👑 PROJECT OLYMPUS - The Oracle\n"
             "Canli matrix baglantisi aktif.\n"
-            "Komut: /oracle BTC"
+            "Komutlar: /oracle BTC | /tarama | /stats [SEMBOL]"
         )
 
     async def command_oracle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -567,9 +592,81 @@ class TelegramHandler:
 
             conf = await load_oracle_config()
             scanner = OracleScanner(_pipeline_runner, _telegram_sender, conf.model_dump())
-            await scanner._run_scan_once()
+            await scanner._run_scan_once(notify_start=False)
         except Exception as exc:
             await update.effective_message.reply_text(f"Tarama hatasi: {exc}")
+
+    async def command_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._deny_if_unauthorized(update):
+            return
+        if not update.effective_message:
+            return
+
+        asset_filter = _normalize_symbol(context.args[0]) if context.args else None
+        db_path = Path("data") / "portfolio.db"
+
+        if not db_path.exists():
+            await update.effective_message.reply_text(
+                "📊 /stats\nHenüz takip verisi yok. Önce en az bir sinyal üretilmeli."
+            )
+            return
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            cur = conn.cursor()
+
+            params: tuple = ()
+            where = ""
+            if asset_filter:
+                where = "WHERE asset = ?"
+                params = (asset_filter,)
+
+            cur.execute(
+                f"SELECT asset, direction, entry_price, stop_loss, t2, status, pnl, timestamp "
+                f"FROM trades {where} ORDER BY id DESC LIMIT 30",
+                params,
+            )
+            rows = cur.fetchall()
+            conn.close()
+
+            if not rows:
+                target = asset_filter or "genel"
+                await update.effective_message.reply_text(f"📊 /stats {target}\nKayıt bulunamadı.")
+                return
+
+            closed = [r for r in rows if str(r[5]).upper() in {"WIN", "LOSS"}]
+            wins = sum(1 for r in closed if str(r[5]).upper() == "WIN")
+            losses = sum(1 for r in closed if str(r[5]).upper() == "LOSS")
+            closed_count = len(closed)
+            win_rate = (wins / closed_count * 100.0) if closed_count else 0.0
+
+            rr_values: list[float] = []
+            for r in rows:
+                entry, stop, t2 = float(r[2]), float(r[3]), float(r[4])
+                risk = abs(entry - stop)
+                if risk <= 0:
+                    continue
+                rr = abs(t2 - entry) / risk
+                rr_values.append(rr)
+
+            avg_rr = sum(rr_values) / len(rr_values) if rr_values else 0.0
+            best_pnl = max(float(r[6]) for r in rows)
+            worst_pnl = min(float(r[6]) for r in rows)
+            last = rows[0]
+            last_status = "✅" if str(last[5]).upper() == "WIN" else ("❌" if str(last[5]).upper() == "LOSS" else "⏳")
+
+            scope = asset_filter or "GENEL"
+            msg = (
+                f"📊 OLYMPUS STATS — {scope}\n"
+                f"Son 30 kayıt: {len(rows)} | Kapanan: {closed_count}\n"
+                f"İsabet: {wins} doğru / {losses} yanlış (%{win_rate:.1f})\n"
+                f"Ort. R:R: {avg_rr:.2f}\n"
+                f"En iyi PnL: %{best_pnl:+.2f} | En kötü PnL: %{worst_pnl:+.2f}\n"
+                f"Son sinyal: {last[7]} | {last[0]} | {last[1]} | {last_status} {last[5]}"
+            )
+            await update.effective_message.reply_text(msg)
+        except Exception as exc:
+            await update.effective_message.reply_text(f"/stats hatası: {exc}")
 
     async def _run_pipeline(
         self,
@@ -600,6 +697,7 @@ class TelegramHandler:
         app.add_handler(CommandHandler("oracle", self.command_oracle))
         app.add_handler(CommandHandler("analiz", self.command_analiz))
         app.add_handler(CommandHandler("tarama", self.command_tarama))
+        app.add_handler(CommandHandler("stats", self.command_stats))
         self._app = app
         return app
 

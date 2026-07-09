@@ -25,7 +25,7 @@ from core.config import load_oracle_config
 from core.console import BLUE, MAGENTA, agent_print
 from core.indicators import normalized_from_score
 from core.types import AgentNode, OracleState, PipelineStatus
-from tools.market_data import fetch_crypto_ohlcv
+from tools.market_data import build_ssl_context, fetch_crypto_ohlcv
 
 
 def _safe_ratio(num: float, den: float) -> float:
@@ -163,13 +163,18 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
     Kripto futures: OI (Açık Pozisyon) ve Funding Rate.
     """
     if "/" not in symbol or "USDT" not in symbol:
-        return {"oi_change": 0.0, "funding_rate": 0.0, "futures_score": 0.0}
+        return {
+            "oi_change": 0.0,
+            "funding_rate": 0.0,
+            "futures_score": 0.0,
+            "futures_available": False,
+        }
 
     futures_symbol = symbol.replace("/", "")
     results: dict[str, float | str] = {}
 
-    try:
-        connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
+    async def _pull(verify_ssl: bool) -> None:
+        connector = aiohttp.TCPConnector(ssl=build_ssl_context(verify_ssl))
         async with aiohttp.ClientSession(connector=connector) as s:
             funding_url = "https://fapi.binance.com/fapi/v1/premiumIndex"
             async with s.get(
@@ -209,9 +214,22 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
                         results["long_short_ratio"] = 1.0
                 else:
                     results["long_short_ratio"] = 1.0
+
+    try:
+        try:
+            await _pull(True)
+        except aiohttp.ClientConnectorCertificateError:
+            logger.warning("[WHALE_HUNTER] Binance futures SSL doğrulaması başarısız, fallback aktif.")
+            await _pull(False)
     except Exception as exc:
         logger.warning(f"[TIMEOUT/BYPASS] Futures Hata: Sistem donmasın diye gecirildi! {exc}")
-        return {"oi_change": 0.0, "funding_rate": 0.0, "futures_score": 0.0, "long_short_ratio": 1.0}
+        return {
+            "oi_change": 0.0,
+            "funding_rate": 0.0,
+            "futures_score": 0.0,
+            "long_short_ratio": 1.0,
+            "futures_available": False,
+        }
        
 
     funding = float(results.get("funding_rate", 0.0) or 0.0)
@@ -241,6 +259,7 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
 
     results["futures_score"] = round(futures_score, 3)
     results["oi_change"] = 0.0
+    results["futures_available"] = True
     return results
 
 
@@ -270,7 +289,18 @@ async def run_whale_hunter(state: OracleState) -> OracleState:
         futures_data = await _fetch_binance_futures_data(state.symbol)
         futures_score = float(futures_data.get("futures_score", 0.0) or 0.0)
 
-        score_0_100, notes, regime = _build_whale_score_0_100(sweep, cvd, futures_score)
+        fallback_mode = str(getattr(whale_conf, "whale_ssl_blocked_fallback", "cvd_only") or "cvd_only").lower()
+        futures_available = bool(futures_data.get("futures_available", False))
+
+        if not futures_available and fallback_mode == "cvd_only":
+            # Futures katmanı yoksa CVD/sweep etkisini daha görünür hale getir.
+            boosted_cvd = cvd.copy()
+            boosted_cvd["score"] = float(np.clip(float(cvd.get("score", 0.0)) * 1.35, -24.0, 24.0))
+            score_0_100, notes, regime = _build_whale_score_0_100(sweep, boosted_cvd, 0.0)
+            notes.append("Futures unavailable -> cvd_only fallback aktif (SSL/erişim blok).")
+        else:
+            score_0_100, notes, regime = _build_whale_score_0_100(sweep, cvd, futures_score)
+
         whale_score = normalized_from_score(score_0_100)
 
         notes.append(

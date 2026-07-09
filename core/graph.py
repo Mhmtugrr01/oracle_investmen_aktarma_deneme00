@@ -18,7 +18,7 @@ from agents.the_oracle import run_the_oracle
 from agents.whale_hunter import run_whale_hunter
 from core.config import get_oracle_config_cached
 from core.console import system_print
-from core.types import OracleState, PipelineStatus
+from core.types import OracleState, PipelineStatus, SignalDirection
 
 RouteAfterCeo = Literal["revise", "red_team", "end_failed", "end_aborted", "end_low_score"]
 RouteAfterRedTeam = Literal["end_aborted", "end_completed"]
@@ -109,12 +109,14 @@ async def end_failed_node(state: OracleState) -> dict[str, Any]:
     failed = state.mark_failed(
         f"CEO denetimi {max_retries} denemede tutarlılık sağlanamadı."
     )
-    # EKLENDI: sinyal etiketini temizle
-    failed = failed.model_copy(update={
-        "signal_label": None,
-        "signal_direction": no_trade,
-        "ceo_approved": False,
-    })
+    # Terminal fail durumunda sinyal alanlarını da sıfırla.
+    failed = failed.model_copy(
+        update={
+            "signal_label": None,
+            "signal_direction": SignalDirection.NO_TRADE,
+            "ceo_approved": False,
+        }
+    )
     return _diff_state(state, failed)
 
 
@@ -139,9 +141,9 @@ async def end_low_score_node(state: OracleState) -> dict[str, Any]:
         update={
             "status": PipelineStatus.ABORTED,
             "fatal_error": reason,
-            "signal_label": None,       # EKLENDI: hayalet sinyal temizle
-            "signal_direction": None,   # EKLENDI
-            "ceo_approved": False,      # EKLENDI
+            "signal_label": None,
+            "signal_direction": SignalDirection.NO_TRADE,
+            "ceo_approved": False,
             "messages": [f"[SYSTEM] {reason}"],
         }
     )

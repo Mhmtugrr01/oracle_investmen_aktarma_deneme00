@@ -96,6 +96,7 @@ class WhaleConfig(BaseModel):
     wick_ratio_threshold: float = Field(gt=0.0, lt=1.0)
     body_ratio_threshold: float = Field(gt=0.0, lt=1.0)
     rr_target_multiplier: float = Field(gt=0.5)
+    whale_ssl_blocked_fallback: str = Field(default="cvd_only")
 
 
 class LlmConfig(BaseModel):

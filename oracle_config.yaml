@@ -12,8 +12,8 @@ risk:
     min_fraction: 0.01
   min_risk_reward_ratio: 3.0   # ESKİ: 2.5 → YENİ: 3.0
   atr:
-    stop_loss_multiplier: 2.0
-    take_profit_multiplier: 2.0
+    stop_loss_multiplier: 1.0
+    take_profit_multiplier: 3.0
 
 ceo:
   max_score_spread: 0.70
@@ -63,6 +63,7 @@ whale:
   wick_ratio_threshold: 0.55
   body_ratio_threshold: 0.25
   rr_target_multiplier: 2.2
+  whale_ssl_blocked_fallback: "cvd_only"
 
 llm:
   model: "openai/gpt-4.1-mini"

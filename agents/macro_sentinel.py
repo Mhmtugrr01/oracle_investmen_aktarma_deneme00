@@ -22,12 +22,22 @@ from tools.market_data import (
 
 async def _fetch_coingecko_global() -> dict:
     url = "https://api.coingecko.com/api/v3/global"
-    connector = aiohttp.TCPConnector(ssl=build_ssl_context(True))
-    async with aiohttp.ClientSession(connector=connector) as session:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"CoinGecko global HTTP {resp.status}")
-            data = await resp.json()
+    timeout = aiohttp.ClientTimeout(total=15)
+    try:
+        connector = aiohttp.TCPConnector(ssl=build_ssl_context(True))
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"CoinGecko global HTTP {resp.status}")
+                data = await resp.json()
+    except aiohttp.ClientConnectorCertificateError:
+        logger.warning("CoinGecko SSL doğrulama başarısız, doğrulamasız fallback aktif.")
+        connector = aiohttp.TCPConnector(ssl=build_ssl_context(False))
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"CoinGecko global HTTP {resp.status}")
+                data = await resp.json()
     return data.get("data", {})
 
 

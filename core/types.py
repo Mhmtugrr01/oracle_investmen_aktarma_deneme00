@@ -112,6 +112,9 @@ class OracleState(BaseModel):
     t2_rr: Optional[float] = Field(default=None)
     t3: Optional[float] = Field(default=None)
     t3_rr: Optional[float] = Field(default=None)
+    fib_382: Optional[float] = Field(default=None)
+    fib_500: Optional[float] = Field(default=None)
+    fib_618: Optional[float] = Field(default=None)
     invalidation_level: Optional[float] = Field(default=None)
     trade_type: Optional[str] = Field(default=None)
     timeframe_alignment_score: Optional[float] = Field(default=None)
@@ -181,9 +184,26 @@ class OracleState(BaseModel):
     def composite_score(self) -> float:
         def _to_unit(value: Optional[float]) -> float:
             if value is None:
-                return 0.0
+                return 0.5
             clipped = max(-1.0, min(1.0, float(value)))
             return (clipped + 1.0) / 2.0
+
+        try:
+            config_weights = get_oracle_config_cached().analysis.weights
+        except Exception:
+            config_weights = {
+                "macro": 0.15,
+                "quant": 0.40,
+                "whale": 0.10,
+                "fundamental": 0.25,
+                "sentiment": 0.10,
+            }
+
+        macro_weight = float(config_weights.get("macro", 0.15))
+        quant_weight = float(config_weights.get("quant", 0.40))
+        whale_weight = float(config_weights.get("whale", 0.10))
+        fundamental_weight = float(config_weights.get("fundamental", 0.25))
+        sentiment_weight = float(config_weights.get("sentiment", 0.10))
 
         macro_component = _to_unit(self.macro_score)
         if "/" in self.symbol and self.cross_asset_score is not None:
@@ -191,12 +211,12 @@ class OracleState(BaseModel):
             macro_component = macro_component * 0.5 + cross_unit * 0.5
 
         score = (
-            macro_component * 0.25
-            + _to_unit(self.whale_score) * 0.20
-            + _to_unit(self.quant_score) * 0.25
-            + _to_unit(self.fundamental_score) * 0.15
+            macro_component * macro_weight
+            + _to_unit(self.whale_score) * whale_weight
+            + _to_unit(self.quant_score) * quant_weight
+            + _to_unit(self.fundamental_score) * fundamental_weight
             + max(0.0, min(1.0, float(self.timeframe_alignment_score or 0.0))) * 0.10
-            + _to_unit(self.sentiment_score) * 0.05
+            + _to_unit(self.sentiment_score) * sentiment_weight
         )
         if self.divergence_daily == "POSITIVE_DIVERGENCE":
             score += 0.05
@@ -243,6 +263,9 @@ class OracleStateUpdate(BaseModel):
     t2_rr: Optional[float] = None
     t3: Optional[float] = None
     t3_rr: Optional[float] = None
+    fib_382: Optional[float] = None
+    fib_500: Optional[float] = None
+    fib_618: Optional[float] = None
     invalidation_level: Optional[float] = None
     trade_type: Optional[str] = None
     timeframe_alignment_score: Optional[float] = None

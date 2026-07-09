@@ -3,11 +3,10 @@
 Test script: R:R fix ve hayalet sinyal kapatma doğrulaması
 """
 import asyncio
-import sys
 from core.types import OracleState, PipelineStatus
 from core.graph import compile_oracle_graph
-from core.console import agent_print, system_print
 from core.config import load_oracle_config
+from tools.market_data import close_exchange_pool
 
 async def main():
     conf = await load_oracle_config()
@@ -25,8 +24,18 @@ async def main():
     )
     
     try:
-        result = await graph.ainvoke({"state": state})
-        final_state = result.get("state")
+        result = await graph.ainvoke(state)
+        if isinstance(result, OracleState):
+            final_state = result
+        elif isinstance(result, dict):
+            payload = result.get("state", result)
+            final_state = OracleState.model_validate(payload)
+        else:
+            final_state = None
+
+        if final_state is None:
+            print("\n✗ HATA: Pipeline sonucu boş döndü (final_state=None)")
+            return
         
         print(f"\n[SONUÇ] Symbol: {final_state.symbol}")
         print(f"[SONUÇ] Status: {final_state.status}")
@@ -38,8 +47,8 @@ async def main():
         if final_state.signal_label:
             print(f"\n✓ SINYAL BAŞARILI: {final_state.signal_label}")
             print(f"  - Base R:R: {final_state.base_rr}")
-            print(f"  - Entry: {final_state.entry}")
-            print(f"  - SL: {final_state.sl}")
+            print(f"  - Entry: {final_state.entry_price}")
+            print(f"  - SL: {final_state.stop_loss}")
             print(f"  - T1: {final_state.t1}")
             print(f"  - Confidence: {final_state.confidence}")
             
@@ -63,6 +72,8 @@ async def main():
         print(f"\n✗ HATA: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        await close_exchange_pool()
     
     print("\n" + "="*80)
     print("TEST TAMAMLANDI")

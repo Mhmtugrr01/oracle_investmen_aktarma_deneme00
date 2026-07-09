@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import ssl
+import time
 from typing import Any
 
 import aiohttp
@@ -50,6 +51,9 @@ CRYPTO_FALLBACK_EXCHANGES = ("kraken", "okx", "kucoin")
 
 # ── GLOBAL BAĞLANTI HAVUZU (Çirkin Uyarıları ve Bağlantı Kaybını Önler) ──
 _EXCHANGES_CACHE: dict[str, Any] = {}
+_DATA_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
+
+_CACHE_TTL_SEC = int(os.getenv("ORACLE_DATA_CACHE_TTL_SEC", "900"))
 
 
 def build_ssl_context(verify: bool | None = None) -> ssl.SSLContext:
@@ -95,6 +99,40 @@ def _get_exchange_instance(exchange_id: str) -> Any:
             }
         )
     return _EXCHANGES_CACHE[exchange_id]
+
+
+def _cache_key(prefix: str, *parts: Any) -> str:
+    return f"{prefix}|" + "|".join(str(p) for p in parts)
+
+
+def _cache_get_df(key: str) -> pd.DataFrame | None:
+    hit = _DATA_CACHE.get(key)
+    if hit is None:
+        return None
+    ts, df = hit
+    if time.time() - ts > _CACHE_TTL_SEC:
+        _DATA_CACHE.pop(key, None)
+        return None
+    return df.copy()
+
+
+def _cache_set_df(key: str, df: pd.DataFrame) -> None:
+    _DATA_CACHE[key] = (time.time(), df.copy())
+
+
+async def close_exchange_pool() -> None:
+    """Close all pooled ccxt exchange clients to prevent unclosed aiohttp sessions."""
+    if not _EXCHANGES_CACHE:
+        return
+    closing = []
+    for ex_id, exchange in list(_EXCHANGES_CACHE.items()):
+        try:
+            closing.append(exchange.close())
+        except Exception as exc:
+            logger.warning(f"Exchange close warning ({ex_id}): {exc}")
+    if closing:
+        await asyncio.gather(*closing, return_exceptions=True)
+    _EXCHANGES_CACHE.clear()
 
 
 def _normalize_yfinance_df(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
@@ -343,6 +381,10 @@ async def fetch_crypto_ohlcv(
     Crypto olmayan semboller için yfinance tabanlı OHLCV döndürür.
     """
     logger.debug(f"fetch_crypto_ohlcv: {symbol} {timeframe} limit={limit}")
+    cache_key = _cache_key("crypto", symbol.upper(), timeframe, limit, exchange_id)
+    cached = _cache_get_df(cache_key)
+    if cached is not None:
+        return cached
     
     # ── ⏳ BACKTEST SÜRECİNDE CRYPTO'LARI CCXT YERİNE MULTI-YEAR YFINANCE'E YÖNLENDİR (Look-Ahead Korumalı!) ──
     import os
@@ -356,6 +398,7 @@ async def fetch_crypto_ohlcv(
         if as_of:
             as_of_dt = pd.to_datetime(as_of, utc=True)
             df = df[df["timestamp"] <= as_of_dt]
+        _cache_set_df(cache_key, df)
         return df
 
     if _is_crypto_symbol(symbol):
@@ -365,6 +408,7 @@ async def fetch_crypto_ohlcv(
 
     if len(df) < 20:
         raise ValueError(f"{symbol} yetersiz bar: {len(df)}")
+    _cache_set_df(cache_key, df)
     return df
 
 
@@ -399,6 +443,10 @@ async def fetch_stock_macro_data(
     DXY (DX-Y.NYB), VIX (^VIX), SPY, NVDA vb. destekler.
     """
     yahoo_ticker = MACRO_TICKERS.get(ticker.upper(), ticker)
+    cache_key = _cache_key("macro", yahoo_ticker.upper(), period, interval)
+    cached = _cache_get_df(cache_key)
+    if cached is not None:
+        return cached
     
     # ⏳ BACKTEST SÜRECİNDE GEÇMİŞ VERİLERİN KESİLMEMESİ İÇİN PERİYODU 5 YILA GENİŞLET
     import os
@@ -407,6 +455,7 @@ async def fetch_stock_macro_data(
         
     logger.debug(f"yfinance download: {yahoo_ticker} period={period}")
     df = await asyncio.to_thread(_download_yfinance, yahoo_ticker, period, interval)
+    _cache_set_df(cache_key, df)
     return df
 
 

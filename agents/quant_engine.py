@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 import pandas_ta as ta
 import yfinance as yf
-import numpy as np
 from loguru import logger
 
 from core.config import load_oracle_config
@@ -79,22 +78,30 @@ def _resample_to_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _get_atr_multipliers(symbol: str) -> dict[str, Any]:
-    """Varlik tipine gore ATR carpanlari. R:R oranı için kritik eşik değerler."""
+def _get_atr_multipliers(symbol: str, risk_conf: Any) -> dict[str, Any]:
+    """Varlik tipine gore ATR carpanlari, config tabanlı minimum R:R kalibrasyonu ile."""
+    stop_mult = float(getattr(risk_conf.atr, "stop_loss_multiplier", 1.0) or 1.0)
+    tp_mult = float(getattr(risk_conf.atr, "take_profit_multiplier", 3.0) or 3.0)
+    min_rr = float(getattr(risk_conf, "min_risk_reward_ratio", 3.0) or 3.0)
+    required_t1 = max(tp_mult, stop_mult * min_rr)
+
     if _is_crypto(symbol):
+        t1 = max(4.5, required_t1)
         return {
-            "stop": 1.0,
-            "t1": 4.5,   # ESKİ: 1.5 → YENİ: 4.5 (R:R fix)
-            "t2": 7.0,
-            "t3": 10.0,
+            "stop": stop_mult,
+            "t1": t1,
+            "t2": max(7.0, t1 * 1.55),
+            "t3": max(10.0, t1 * 2.20),
             "atr_period": 14,
             "atr_timeframe": "4h",
         }
+
+    t1 = max(3.6, required_t1)
     return {
-        "stop": 1.0,
-        "t1": 4.5,   # ESKİ: 1.5 → YENİ: 4.5
-        "t2": 7.0,
-        "t3": 10.0,
+        "stop": stop_mult,
+        "t1": t1,
+        "t2": max(5.2, t1 * 1.50),
+        "t3": max(7.8, t1 * 2.10),
         "atr_period": 14,
         "atr_timeframe": "1d",
     }
@@ -257,6 +264,32 @@ def _alignment_score(biases: dict[str, str]) -> tuple[float, int]:
     mapping = {4: 1.0, 3: 0.75, 2: 0.50}
     return mapping.get(aligned, 0.25), aligned
 
+
+def _extract_macro_dominance(state: OracleState) -> tuple[float | None, float | None]:
+    """Read BTC.D and USDT.D values emitted by MACRO_SENTINEL message stream."""
+    macro_msg = next((m for m in state.messages if m.startswith("[MACRO_SENTINEL]")), "")
+    if not macro_msg:
+        return None, None
+
+    btc_d: float | None = None
+    usdt_d: float | None = None
+    for part in macro_msg.split():
+        if part.startswith("btc_d="):
+            raw = part.split("=", 1)[1]
+            if raw != "NA":
+                try:
+                    btc_d = float(raw)
+                except ValueError:
+                    btc_d = None
+        elif part.startswith("usdt_d="):
+            raw = part.split("=", 1)[1]
+            if raw != "NA":
+                try:
+                    usdt_d = float(raw)
+                except ValueError:
+                    usdt_d = None
+    return btc_d, usdt_d
+
 def _detect_price_breakout(df: pd.DataFrame) -> bool:
     """
     Fiyat grafiğinde son 20 bardaki zirvelerden geçen düşen trend çizgisinin 
@@ -292,15 +325,22 @@ def _detect_price_breakout(df: pd.DataFrame) -> bool:
     return False
 
 
-def _detect_rsi_breakout(df: pd.DataFrame, rsi_col: str = "rsi_14") -> bool:
+def _detect_rsi_breakout(df: pd.DataFrame) -> bool:
     """
     RSI göstergesinin kendi düşen trend çizgisini (momentum kırılımını) 
     yukarı kırıp kırmadığını hesaplar.
     """
-    if len(df) < 20 or rsi_col not in df.columns:
+    if len(df) < 20:
         return False
-        
-    recent_rsi = df[rsi_col].tail(20).values
+
+    rsi_series = ta.rsi(df["close"], length=14)
+    if rsi_series is None or rsi_series.dropna().empty:
+        return False
+    rsi_series = rsi_series.dropna()
+    if len(rsi_series) < 20:
+        return False
+
+    recent_rsi = rsi_series.tail(20).values
     x = np.arange(len(recent_rsi))
     slope, intercept = np.polyfit(x, recent_rsi, 1)
     
@@ -310,8 +350,8 @@ def _detect_rsi_breakout(df: pd.DataFrame, rsi_col: str = "rsi_14") -> bool:
     prev_trend_val = slope * 18 + intercept
     curr_trend_val = slope * 19 + intercept
     
-    prev_rsi = df[rsi_col].iloc[-2]
-    curr_rsi = df[rsi_col].iloc[-1]
+    prev_rsi = float(rsi_series.iloc[-2])
+    curr_rsi = float(rsi_series.iloc[-1])
     
     # RSI Düşen Trend Kırılım Teyidi
     if prev_rsi <= prev_trend_val and curr_rsi > curr_trend_val:
@@ -320,13 +360,19 @@ def _detect_rsi_breakout(df: pd.DataFrame, rsi_col: str = "rsi_14") -> bool:
     return False
 
 
-def _detect_rsi_hook(df: pd.DataFrame, rsi_col: str = "rsi_14") -> bool:
+def _detect_rsi_hook(df: pd.DataFrame) -> bool:
     """RSI'ın 30 çukurundan kafasını yukarı kaldırdığını (hook/reclaim) doğrular."""
     try:
-        if len(df) < 5 or rsi_col not in df.columns:
+        if len(df) < 5:
             return False
-        prev_rsi = df[rsi_col].iloc[-2]
-        curr_rsi = df[rsi_col].iloc[-1]
+        rsi_series = ta.rsi(df["close"], length=14)
+        if rsi_series is None or rsi_series.dropna().empty:
+            return False
+        rsi_series = rsi_series.dropna()
+        if len(rsi_series) < 2:
+            return False
+        prev_rsi = float(rsi_series.iloc[-2])
+        curr_rsi = float(rsi_series.iloc[-1])
         return prev_rsi < 30.0 and curr_rsi >= 30.0
     except Exception:
         return False
@@ -410,6 +456,35 @@ def find_historical_levels(df: pd.DataFrame, lookback_days: int = 500, threshold
     current = float(closes[-1]) if closes else 0.0
     near = any(abs(current - lv) / lv <= 0.03 for lv in levels if lv != 0)
     return levels[:8], near
+
+
+def _compute_fibonacci_levels(df: pd.DataFrame, direction: str, lookback: int = 120) -> dict[str, float] | None:
+    """Compute 0.382 / 0.500 / 0.618 retracement levels from recent swing."""
+    if df is None or df.empty or len(df) < 20:
+        return None
+    sample = df.tail(min(max(lookback, 20), len(df)))
+    swing_high = float(sample["high"].max())
+    swing_low = float(sample["low"].min())
+    if swing_high <= swing_low:
+        return None
+
+    span = swing_high - swing_low
+    if direction == "SHORT":
+        # Bearish leg retrace levels measured upward from recent low.
+        fib_382 = swing_low + (span * 0.382)
+        fib_500 = swing_low + (span * 0.500)
+        fib_618 = swing_low + (span * 0.618)
+    else:
+        # Bullish leg pullback levels measured downward from recent high.
+        fib_382 = swing_high - (span * 0.382)
+        fib_500 = swing_high - (span * 0.500)
+        fib_618 = swing_high - (span * 0.618)
+
+    return {
+        "fib_382": round(float(fib_382), 8),
+        "fib_500": round(float(fib_500), 8),
+        "fib_618": round(float(fib_618), 8),
+    }
 
 
 def find_similar_cycles(df: pd.DataFrame, current_window: int = 60, top_n: int = 3) -> tuple[float, str, str]:
@@ -742,8 +817,8 @@ async def run_quant_engine(state: OracleState) -> OracleState:
             df_local = tf_dfs.get("4h")
 
         price_breakout = _detect_price_breakout(df_local)
-        rsi_breakout = _detect_rsi_breakout(df_local, rsi_col="rsi_14")
-        rsi_hook = _detect_rsi_hook(df_local, rsi_col="rsi_14")
+        rsi_breakout = _detect_rsi_breakout(df_local)
+        rsi_hook = _detect_rsi_hook(df_local)
         
         trade_type = _decide_trade_type(
             weekly_bias, daily_bias, h4_bias, h1_bias,
@@ -768,7 +843,7 @@ async def run_quant_engine(state: OracleState) -> OracleState:
 
         h4_df = tf_dfs["4h"] if len(tf_dfs["4h"]) >= 20 else tf_dfs["1d"]
         daily_df = tf_dfs["1d"]
-        atr_cfg = _get_atr_multipliers(state.symbol)
+        atr_cfg = _get_atr_multipliers(state.symbol, risk_conf)
         atr_tf = str(atr_cfg["atr_timeframe"])
         atr_df = h4_df if atr_tf == "4h" else daily_df
         atr_series = _calculate_atr(atr_df, period=int(atr_cfg["atr_period"]))
@@ -805,8 +880,14 @@ async def run_quant_engine(state: OracleState) -> OracleState:
             t3_multiplier=float(atr_cfg["t3"]),
         )
         
+        direction_for_fib = "SHORT" if trade_type in {"STRONG_SELL_OR_SHORT"} else "LONG"
+        fib_levels = _compute_fibonacci_levels(h4_df, direction=direction_for_fib, lookback=120)
+
         import json
-        levels_shuttle = f"[LEVELS_DATA] LONG:{json.dumps(long_levels)}|SHORT:{json.dumps(short_levels)}"
+        levels_payload: dict[str, Any] = {"LONG": long_levels, "SHORT": short_levels}
+        if fib_levels:
+            levels_payload["FIB"] = fib_levels
+        levels_shuttle = f"[LEVELS_DATA] {json.dumps(levels_payload)}"
 
         historical_df = tf_dfs["1d"] if len(tf_dfs["1d"]) >= 20 else h4_df
         levels, near_hist_level = find_historical_levels(historical_df, lookback_days=500, threshold=0.02)
@@ -823,6 +904,19 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "historical_similarity_score": historical_similarity_score,
             }
         )
+
+        # USDT dominance ters korelasyon teyidi: kripto long kararlarında ek güvenlik uyarısı.
+        dominance_warnings: list[str] = []
+        if _is_crypto(state.symbol):
+            _, usdt_d = _extract_macro_dominance(state)
+            if usdt_d is not None and usdt_d >= 7.0 and trade_type in {
+                "ACCUMULATE_ZONE",
+                "STRONG_LONG_TERM_ENTRY",
+                "SHORT_TERM_BOUNCE_ONLY",
+            }:
+                dominance_warnings.append(
+                    f"USDT.D yüksek ({usdt_d:.2f}) -> LONG sinyalinde likidite baskısı riski."
+                )
 
         agent_print("QUANT_ENGINE", f"Bias 1w/1d/4h/1h={weekly_bias}/{daily_bias}/{h4_bias}/{h1_bias}", BLUE)
         agent_print("QUANT_ENGINE", f"Alignment={alignment_score:.2f} ({aligned_count}/4) | TradeType={trade_type}", GREEN)
@@ -846,6 +940,9 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "t2_rr": long_levels["t2_rr"],
                 "t3": long_levels["t3"],
                 "t3_rr": long_levels["t3_rr"],
+                "fib_382": fib_levels["fib_382"] if fib_levels else None,
+                "fib_500": fib_levels["fib_500"] if fib_levels else None,
+                "fib_618": fib_levels["fib_618"] if fib_levels else None,
                 "invalidation_level": long_levels["invalidation_level"],
                 "base_rr": long_levels["base_rr"],
                 "risk_reward_ratio": long_levels["base_rr"],
@@ -863,6 +960,7 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                     f"[QUANT_ENGINE] tf_bias={biases} align={alignment_score:.2f} trade={trade_type} "
                     f"base_rr={long_levels['base_rr']} hist_score={historical_similarity_score:.1f} "
                     f"levels={len(levels)} ma_fallback={ma_fallback_used}",
+                    *[f"[QUANT_ENGINE] WARN {w}" for w in dominance_warnings],
                     f"[DYNAMIC_TARGET] {long_levels['dynamic_trendline_target']}", # Geometrik hedef şatılı
                     levels_shuttle # Veri Şatılı güvenli mesaj kuyruğuna yükleniyor!
                 ],

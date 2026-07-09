@@ -213,9 +213,18 @@ class OracleScanner:
     # =========================================================================
     # ── ANA TARAMA METODU ──
     # =========================================================================
-    async def _run_scan_once(self):
+    async def _run_scan_once(self, notify_start: bool = True):
         all_assets = self._get_all_assets()
         logger.info(f"[SCANNER] Tam tarama OLYMPUS KINETIC PROTOKOLÜYLE Başlatıldı — İzlenen Toplam Derinliği: {len(all_assets)} Varlık")
+        if notify_start:
+            try:
+                await self.bot(
+                    "🔍 ORACLE TARAMA BAŞLADI\n"
+                    f"{len(all_assets)} varlık analiz ediliyor... (~15 dk)\n"
+                    "Sonuçlar hazır olduğunda otomatik bildirim gelecek."
+                )
+            except Exception as exc:
+                logger.warning(f"[SCANNER] Tarama başlangıç bildirimi gönderilemedi: {exc}")
 
         # ── 🛡️ CO-ROUTINE GATHERING SÜZGECİ (Filtreleme) ──
         hot_5 = await self._pre_filter_assets(all_assets)

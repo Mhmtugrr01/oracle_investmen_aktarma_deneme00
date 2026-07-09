@@ -4,6 +4,7 @@ PROJECT OLYMPUS — main.py (Executive Dashboard & Lifespan Reformed - Zero-Defe
 
 import asyncio
 import os
+import tempfile
 import uvicorn
 import yaml
 from fastapi import FastAPI, Request
@@ -11,6 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from bot.telegram_handler import create_handler
 from loguru import logger
 from contextlib import asynccontextmanager
+from tools.market_data import close_exchange_pool
 
 CONFIG_PATH = "oracle_config.yaml"
 
@@ -38,12 +40,46 @@ async def portfolio_tracker_loop():
         await asyncio.sleep(7200) # 4 saatte bir ( saniye) pusuya yat
 
 handler = None
+_BOT_LOCK_FD = None
+_BOT_LOCK_PATH = os.path.join(tempfile.gettempdir(), "the_oracle_bot.lock")
+
+
+def _acquire_single_instance_lock() -> bool:
+    """Acquire process-wide lock so only one polling bot instance runs."""
+    global _BOT_LOCK_FD
+    try:
+        _BOT_LOCK_FD = os.open(_BOT_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        os.write(_BOT_LOCK_FD, str(os.getpid()).encode("ascii", errors="ignore"))
+        return True
+    except FileExistsError:
+        return False
+
+
+def _release_single_instance_lock() -> None:
+    global _BOT_LOCK_FD
+    if _BOT_LOCK_FD is not None:
+        try:
+            os.close(_BOT_LOCK_FD)
+        except OSError:
+            pass
+        _BOT_LOCK_FD = None
+    try:
+        if os.path.exists(_BOT_LOCK_PATH):
+            os.unlink(_BOT_LOCK_PATH)
+    except OSError:
+        pass
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Modern lifespan event handler (Deprecation ve Çökme önleyici kalkan)."""
     global handler
     try:
+        lock_ok = _acquire_single_instance_lock()
+        if not lock_ok:
+            logger.warning("[SYSTEM] Telegram polling lock dolu. İkinci bot instance başlatılmadı.")
+            yield
+            return
+
         token = os.getenv("TELEGRAM_BOT_TOKEN")
         if not token:
             logger.error("[SYSTEM] TELEGRAM_BOT_TOKEN bulunamadı!")
@@ -55,7 +91,11 @@ async def lifespan(app: FastAPI):
             logger.info("[SYSTEM] Telegram bot polling ve Portföy Takip döngüsü başlatıldı.")
     except Exception as exc:
         logger.error(f"[SYSTEM] Bot başlatma hatası: {exc}")
-    yield
+    try:
+        yield
+    finally:
+        await close_exchange_pool()
+        _release_single_instance_lock()
 
 app = FastAPI(lifespan=lifespan)
 
