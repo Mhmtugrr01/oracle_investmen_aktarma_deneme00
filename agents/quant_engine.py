@@ -160,6 +160,10 @@ def _classify_bias(price: float, ema50: float, sma200: float, rsi: float) -> str
         return "OVERSOLD"
     if rsi > 65:
         return "OVERBOUGHT"
+    if price > ema50 and rsi < 48:
+        return "ACCUMULATING"
+    if price < ema50 and rsi > 52:
+        return "DISTRIBUTING"
     return "NEUTRAL"
 
 
@@ -252,9 +256,9 @@ def _compute_tf_indicators(df: pd.DataFrame) -> dict[str, Any]:
 def _alignment_score(biases: dict[str, str]) -> tuple[float, int]:
     normalized = []
     for b in biases.values():
-        if b in ("BULLISH", "OVERSOLD"):
+        if b in ("BULLISH", "OVERSOLD", "ACCUMULATING"):
             normalized.append("BULL")
-        elif b in ("BEARISH", "OVERBOUGHT"):
+        elif b in ("BEARISH", "OVERBOUGHT", "DISTRIBUTING"):
             normalized.append("BEAR")
         else:
             normalized.append("NEUTRAL")
@@ -614,12 +618,16 @@ def _technical_unit_from_timeframes(tf: dict[str, dict[str, Any]], divergence_bo
     elif weekly["bias"] == "BEARISH":  score -= 0.20
     elif weekly["bias"] == "OVERSOLD": score += 0.18   # Haftalık OVERSOLD = büyük fırsat
     elif weekly["bias"] == "OVERBOUGHT": score -= 0.18
+    elif weekly["bias"] == "ACCUMULATING": score += 0.10
+    elif weekly["bias"] == "DISTRIBUTING": score -= 0.10
 
     # --- Günlük bias ---
     if daily["bias"] == "BULLISH":    score += 0.12
     elif daily["bias"] == "BEARISH":  score -= 0.12
     elif daily["bias"] == "OVERSOLD": score += 0.10
     elif daily["bias"] == "OVERBOUGHT": score -= 0.10
+    elif daily["bias"] == "ACCUMULATING": score += 0.06
+    elif daily["bias"] == "DISTRIBUTING": score -= 0.06
 
     # --- RSI çok zaman dilimi uyumu (en güçlü sinyal) ---
     weekly_rsi = float(weekly.get("rsi", 50.0))

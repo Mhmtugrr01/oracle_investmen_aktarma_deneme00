@@ -222,6 +222,14 @@ class OracleState(BaseModel):
             score += 0.05
         elif self.divergence_daily == "NEGATIVE_DIVERGENCE":
             score -= 0.05
+
+        hist = float(self.historical_similarity_score or 0.0)
+        pattern_bias = str(self.pattern_outcome_bias or "")
+        if hist >= 75.0 and pattern_bias == "HISTORICALLY_BULLISH":
+            score += 0.04
+        elif hist >= 75.0 and pattern_bias == "HISTORICALLY_BEARISH":
+            score -= 0.04
+
         return round(max(0.0, min(1.0, score)), 4)
 
     @property
