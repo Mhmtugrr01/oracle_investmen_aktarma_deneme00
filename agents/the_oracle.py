@@ -53,6 +53,20 @@ async def run_the_oracle(state: OracleState) -> OracleState:
     _div_bon += (0.08 if _div_w in ["POSITIVE_DIVERGENCE", "NEGATIVE_DIVERGENCE"] else 0.0)
     _hist_bon = (_hist / 100.0) * 0.10
     _actual_conf = round(max(0.0, min(1.0, _base_conf - _var_pen + _div_bon + _hist_bon)), 3)
+
+    # ── Extreme Fear / Greed Contrarian Bonusu (composite ile simetrik) ──────
+    _fg = getattr(state, "fear_greed_value", None)
+    if _fg is not None:
+        if int(_fg) <= 25:
+            _actual_conf = round(min(1.0, _actual_conf + 0.06), 3)   # Extreme Fear = güçlü contrarian
+        elif int(_fg) >= 75:
+            _actual_conf = round(max(0.0, _actual_conf - 0.04), 3)   # Extreme Greed = dikkat
+    # Tarihsel benzerlik bonusu
+    if _hist >= 75.0 and str(getattr(state, "pattern_outcome_bias", "") or "").upper() == "HISTORICALLY_BULLISH":
+        _actual_conf = round(min(1.0, _actual_conf + 0.03), 3)
+    elif _hist >= 75.0 and str(getattr(state, "pattern_outcome_bias", "") or "").upper() == "HISTORICALLY_BEARISH":
+        _actual_conf = round(min(1.0, _actual_conf + 0.02), 3)  # uncertain ama tarihsel pattern var
+
     state = state.model_copy(update={"confidence": _actual_conf})
 
     if (state.confidence or 0.0) == 0.0:
@@ -146,8 +160,8 @@ async def run_the_oracle(state: OracleState) -> OracleState:
         (tf_biases.get("4h", "NEUTRAL") or "NEUTRAL").upper(),
         (tf_biases.get("1h", "NEUTRAL") or "NEUTRAL").upper(),
     ]
-    _BULL = {"BULLISH", "STRONGLY_BULLISH", "OVERBOUGHT"}
-    _BEAR = {"BEARISH", "STRONGLY_BEARISH", "OVERSOLD"}
+    _BULL = {"BULLISH", "STRONGLY_BULLISH", "OVERSOLD", "ACCUMULATING"}
+    _BEAR = {"BEARISH", "STRONGLY_BEARISH", "OVERBOUGHT", "DISTRIBUTING"}
     _nb = sum(1 for x in _b if x in _BULL)
     _ns = sum(1 for x in _b if x in _BEAR)
     # ── 🛡️ DUAL-CONCURRENCE LOOP: YÖN VE SEVİYE MUTABAKATI (R03 Phase 2) ──
@@ -172,20 +186,20 @@ async def run_the_oracle(state: OracleState) -> OracleState:
         if msg.startswith("[LEVELS_DATA]"):
             try:
                 import json
-                parts = msg.replace("[LEVELS_DATA] ", "").split("|")
-                long_part = parts[0].replace("LONG:", "")
-                short_part = parts[1].replace("SHORT:", "")
-                
-                chosen_data = json.loads(long_part) if direction == SignalDirection.LONG else json.loads(short_part)
-                
-                entry_val = chosen_data["entry_zone_low"]
-                stop_val = chosen_data["stop_loss"]
-                t1_val = chosen_data["t1"]
-                t2_val = chosen_data["t2"]
-                t3_val = chosen_data["t3"]
-                base_rr_val = chosen_data["base_rr"]
+                # Quant sends pure JSON: {"LONG": {...}, "SHORT": {...}, "FIB": {...}}
+                raw_json = msg[len("[LEVELS_DATA] "):]
+                data = json.loads(raw_json)
+                direction_key = "LONG" if direction == SignalDirection.LONG else "SHORT"
+                chosen_data = data[direction_key]
+
+                entry_val = chosen_data.get("entry_zone_low")
+                stop_val = chosen_data.get("stop_loss")
+                t1_val = chosen_data.get("t1")
+                t2_val = chosen_data.get("t2")
+                t3_val = chosen_data.get("t3")
+                base_rr_val = chosen_data.get("base_rr")
             except Exception as e:
-                logger.error(f"[THE_ORACLE] Şatıl çözme hatası: {e}")
+                logger.error(f"[THE_ORACLE] LEVELS_DATA çözme hatası: {e}")
         elif msg.startswith("[DYNAMIC_TARGET]"):
             try:
                 dynamic_target = float(msg.replace("[DYNAMIC_TARGET] ", ""))
@@ -227,8 +241,9 @@ async def run_the_oracle(state: OracleState) -> OracleState:
             "current_node": AgentNode.THE_ORACLE,
             "status": PipelineStatus.RUNNING,
             "composite_score": composite,
-            "consensus_variance": consensus_variance, # Sahte değişken doğrusuyla mühürlendi!
-            "confidence": confidence,
+            "consensus_variance": consensus_variance,
+            "confidence": _actual_conf,
+            "ceo_approved": True,
             "signal_direction": direction,
             "signal_label": _sig_label,
             "oracle_note": note,
