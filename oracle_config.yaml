@@ -68,8 +68,8 @@ whale:
 llm:
   model: "openai/gpt-4.1-mini"
   temperature: 0.0
-  timeout_seconds: 25
-  max_retries: 3
+  timeout_seconds: 20
+  max_retries: 1
   base_url_env: "OPENROUTER_BASE_URL"
   api_key_env: "OPENROUTER_API_KEY"
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from pydantic import BaseModel, Field
 
 from core.config import load_oracle_config
@@ -19,6 +21,12 @@ class RedTeamVerdict(BaseModel):
 _LLM = LlmEngine()
 
 
+def _fmt_score(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{float(value):+.4f}"
+
+
 def _build_red_team_prompt(state: OracleState, consensus_variance: float) -> str:
     return (
         "Aşağıdaki sinyal raporunu acımasız kurumsal fon bakış açısıyla incele ve "
@@ -31,11 +39,11 @@ def _build_red_team_prompt(state: OracleState, consensus_variance: float) -> str
         f"Entry: {state.entry_price}\n"
         f"Stop: {state.stop_loss}\n"
         f"TP: {state.take_profit}\n"
-        f"Macro Score: {state.macro_score:+.4f}\n"
-        f"Quant Score: {state.quant_score:+.4f}\n"
-        f"Whale Score: {state.whale_score:+.4f}\n"
-        f"Fundamental Score: {state.fundamental_score:+.4f}\n"
-        f"Sentiment Score: {state.sentiment_score:+.4f}\n"
+        f"Macro Score: {_fmt_score(state.macro_score)}\n"
+        f"Quant Score: {_fmt_score(state.quant_score)}\n"
+        f"Whale Score: {_fmt_score(state.whale_score)}\n"
+        f"Fundamental Score: {_fmt_score(state.fundamental_score)}\n"
+        f"Sentiment Score: {_fmt_score(state.sentiment_score)}\n"
     )
 
 
@@ -99,16 +107,37 @@ async def run_red_team(state: OracleState) -> OracleState:
             }
         )
 
-    llm_verdict = await _LLM.invoke_structured(
-        schema=RedTeamVerdict,
-        system_prompt=(
-            "Sen kurumsal risk savcısısın. Varsayılan davranışın reddetmek olmalı. "
-            "Kanıt yoksa fatal_error=true dön. Verdiğin 'justification_notes' "
-            "kesinlikle ve sadece TURKCE, rasyonel ve kurumsal bir dille yazılmalıdır. "
-            "Asla İngilizce çıktı üretme."
-        ),
-        user_prompt=_build_red_team_prompt(state, consensus_variance),
-    )
+    llm_timeout = min(float(conf.llm.timeout_seconds), 20.0)
+    llm_fallback_used = False
+    try:
+        llm_verdict = await asyncio.wait_for(
+            _LLM.invoke_structured(
+                schema=RedTeamVerdict,
+                system_prompt=(
+                    "Sen kurumsal risk savcısısın. Varsayılan davranışın reddetmek olmalı. "
+                    "Kanıt yoksa fatal_error=true dön. Verdiğin 'justification_notes' "
+                    "kesinlikle ve sadece TURKCE, rasyonel ve kurumsal bir dille yazılmalıdır. "
+                    "Asla İngilizce çıktı üretme."
+                ),
+                user_prompt=_build_red_team_prompt(state, consensus_variance),
+            ),
+            timeout=llm_timeout,
+        )
+    except Exception as llm_exc:
+        llm_fallback_used = True
+        agent_print(
+            "RED_TEAM",
+            f"LLM yanıtı alınamadı ({llm_exc}); kural bazlı fallback onayı devrede.",
+            YELLOW,
+        )
+        llm_verdict = RedTeamVerdict(
+            fatal_error=False,
+            confidence=max(0.60, float(state.confidence or 0.0)),
+            justification_notes=(
+                "LLM erişilemedi/timeout. Black swan ve R:R kural kontrolleri başarıyla geçti; "
+                "süreç fallback onayla devam ettirildi."
+            ),
+        )
 
     if (
         red_conf.fail_on_fatal
@@ -148,6 +177,9 @@ async def run_red_team(state: OracleState) -> OracleState:
             "red_team_verdict": approved_message,
             "red_team_objections": ["LLM notu: " + llm_verdict.justification_notes],
             "confidence": max(state.confidence, min(1.0, llm_verdict.confidence)),
-            "messages": [f"[RED_TEAM] APPROVED {state.symbol}"],
+            "messages": [
+                f"[RED_TEAM] APPROVED {state.symbol}",
+                "[RED_TEAM] LLM_FALLBACK" if llm_fallback_used else "[RED_TEAM] LLM_OK",
+            ],
         }
     )

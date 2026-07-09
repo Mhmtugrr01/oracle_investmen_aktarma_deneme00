@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Type, TypeVar
 
@@ -10,7 +11,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 from tenacity import (
     AsyncRetrying,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -18,6 +19,13 @@ from tenacity import (
 from core.config import load_oracle_config
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
+
+
+def _retryable_llm_exception(exc: Exception) -> bool:
+    """Retry transient transport/provider errors, but never retry hard timeout/cancel paths."""
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, asyncio.CancelledError)):
+        return False
+    return isinstance(exc, Exception)
 
 
 class LlmEngine:
@@ -68,7 +76,7 @@ class LlmEngine:
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(self._max_retry_attempts),
             wait=wait_exponential(multiplier=2, min=2, max=8),
-            retry=retry_if_exception_type(Exception),
+            retry=retry_if_exception(_retryable_llm_exception),
             reraise=True,
         ):
             with attempt:
