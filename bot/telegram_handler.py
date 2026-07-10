@@ -361,6 +361,12 @@ def format_oracle_response(state: OracleState) -> str:
     manager_summary = _build_manager_summary(state, score_pct)
     red_team_note = _extract_red_team_note(state)
 
+    # Whale strateji notu (Remora/Çakal)
+    whale_strat_msg = next((m for m in (state.messages or []) if m.startswith("[WHALE_STRATEGY]")), None)
+    whale_strategy_line = ""
+    if whale_strat_msg:
+        whale_strategy_line = f"\n\n🐋 BALİNA STRATEJİSİ:\n\"{whale_strat_msg.replace('[WHALE_STRATEGY] ', '')}\"\n"
+
     signal = state.signal_label or "WATCH"
     signal_emoji = _signal_emoji(signal)
     confluence_count = _confluence_count(state)
@@ -395,11 +401,18 @@ def format_oracle_response(state: OracleState) -> str:
     fib_lines = []
     if state.fib_382 is not None and state.fib_500 is not None and state.fib_618 is not None:
         fib_lines = [
-            "\n🎯 ALIM BÖLGELERİ (FIBONACCI):",
+            "\n🎯 ALIM BÖLGELERİ (FİBONACCI RETRACEMent):",
             f"   0.382 → ${state.fib_382:.4f} (İlk destek)",
             f"   0.500 → ${state.fib_500:.4f} (Güçlü destek)",
             f"   0.618 → ${state.fib_618:.4f} ⭐ (Altın oran)",
         ]
+        if state.fib_ext_1272 is not None:
+            fib_lines += [
+                "\n📤 TP HEDEFLERİ (FİBONACCI UZANTI):",
+                f"   1.272 → ${state.fib_ext_1272:.4f}  [T1 hedef]",
+                f"   1.618 → ${state.fib_ext_1618:.4f}  [T2 hedef] ⭐",
+                f"   2.618 → ${state.fib_ext_2618:.4f}  [T3 uzak hedef]",
+            ]
     level_block = "\n".join(level_lines) if level_lines else "   - Seviye hesaplanamadı"
     fib_block = "\n".join(fib_lines)
 
@@ -433,7 +446,8 @@ def format_oracle_response(state: OracleState) -> str:
         "💡 CEO ANALİZİ:\n"
         f"\"{manager_summary}\"\n\n"
         "⚔️ KATİL SAVCI:\n"
-        f"\"{red_team_note}\"\n\n"
+        f"\"{red_team_note}\"\n"
+        f"{whale_strategy_line}"
         "⚠️ UYARILAR:\n"
         f"{area_context}\n\n"
         f"📅 GEÇERLİLİK: {validity_period}\n"
@@ -715,6 +729,118 @@ class TelegramHandler:
         except Exception as exc:
             await update.effective_message.reply_text(f"/stats hatası: {exc}")
 
+    async def command_backtesting(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Geçmiş sinyal win-rate, ortalama R:R ve varlık bazlı başarı özeti."""
+        if await self._deny_if_unauthorized(update):
+            return
+        if not update.effective_message:
+            return
+        db_path = Path("data") / "portfolio.db"
+        if not db_path.exists():
+            await update.effective_message.reply_text("📈 /backtesting\nHenüz kayıtlı sinyal yok.")
+            return
+        try:
+            import sqlite3 as _sq
+            conn = _sq.connect(str(db_path))
+            cur = conn.cursor()
+            cur.execute("SELECT asset, direction, entry_price, stop_loss, t2, status, pnl FROM trades ORDER BY id DESC")
+            rows = cur.fetchall()
+            conn.close()
+            if not rows:
+                await update.effective_message.reply_text("📈 /backtesting\nKayıt bulunamadı.")
+                return
+            total = len(rows)
+            closed = [r for r in rows if str(r[5]).upper() in {"WIN","LOSS"}]
+            wins = sum(1 for r in closed if str(r[5]).upper() == "WIN")
+            losses = len(closed) - wins
+            win_rate = wins / len(closed) * 100 if closed else 0.0
+            rr_vals = []
+            for r in rows:
+                entry, sl, t2 = float(r[2]), float(r[3]), float(r[4])
+                risk = abs(entry - sl)
+                if risk > 0:
+                    rr_vals.append(abs(t2 - entry) / risk)
+            avg_rr = sum(rr_vals) / len(rr_vals) if rr_vals else 0.0
+            # Per-asset breakdown
+            from collections import defaultdict
+            asset_wins: dict = defaultdict(int)
+            asset_total: dict = defaultdict(int)
+            for r in closed:
+                asset_total[r[0]] += 1
+                if str(r[5]).upper() == "WIN":
+                    asset_wins[r[0]] += 1
+            best_asset = max(asset_wins, key=lambda a: asset_wins[a] / max(asset_total[a],1), default="—")
+            pnl_vals = [float(r[6]) for r in rows if r[6] is not None]
+            cum_pnl = sum(pnl_vals)
+            msg = (
+                "📈 OLYMPUS BACKTESTING RAPORU\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Toplam Sinyal : {total}\n"
+                f"Kapanan       : {len(closed)}  (Kazanç: {wins} | Kayıp: {losses})\n"
+                f"Win-Rate      : %{win_rate:.1f}\n"
+                f"Ort. R:R      : {avg_rr:.2f}\n"
+                f"Kümülatif PnL : %{cum_pnl:+.2f}\n"
+                f"En İyi Varlık : {best_asset}\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "💡 Detaylı tablo için /stats kullanın."
+            )
+            await update.effective_message.reply_text(msg)
+        except Exception as exc:
+            await update.effective_message.reply_text(f"/backtesting hatası: {exc}")
+
+    async def command_detay(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/detay BTC — Bir varlık için tüm ajan skorları ve Fibonacci + Remora/Çakal detayı."""
+        if await self._deny_if_unauthorized(update):
+            return
+        if not update.effective_message:
+            return
+        symbol = _normalize_symbol(context.args[0] if context.args else "BTC")
+        if symbol == "__SCAN__":
+            await update.effective_message.reply_text("Kullanım: /detay BTC")
+            return
+        progress = await update.effective_message.reply_text(f"⚙️ {symbol} detaylı analiz başlatıldı...")
+        user_id = str(update.effective_user.id) if update.effective_user else ""
+        chat_id = int(update.effective_chat.id) if update.effective_chat else 0
+        try:
+            state = await self._run_pipeline(symbol=symbol, user_id=user_id, chat_id=chat_id, query=f"/detay {symbol}")
+            lines = [
+                f"🔬 DETAYLI ANALİZ — {symbol}",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"Kompozit Skor : {state.composite_score*100:.1f}%",
+                f"Güven         : {state.confidence*100:.1f}%",
+                "",
+                "📊 AJAN SKORLARI:",
+                f"  Makro        : {state.macro_score:+.3f}  ({state.macro_score*100:+.1f}%)",
+                f"  Quant/Teknik : {state.quant_score:+.3f}  ({state.quant_score*100:+.1f}%)",
+                f"  Balina       : {state.whale_score:+.3f}  ({(state.whale_score or 0)*100:+.1f}%)" if state.whale_score is not None else "  Balina       : Veri yok (SSL fallback)",
+                f"  Fundamental  : {state.fundamental_score:+.3f}  ({state.fundamental_score*100:+.1f}%)",
+                f"  Sentiment    : {state.sentiment_score:+.3f}  ({state.sentiment_score*100:+.1f}%)",
+                "",
+                "📈 TIMEFRAME:",
+            ]
+            biases = state.timeframe_biases or {}
+            for tf, label in [("1w","Haftalık"),("1d","Günlük"),("4h","4 Saat"),("1h","1 Saat")]:
+                lines.append(f"  {label:10s}: {biases.get(tf,'?')}")
+            lines += [
+                "",
+                "🎯 FİBONACCI SEVİYELERİ:",
+                f"  Retracement 0.382 : {_format_price(state.fib_382)}",
+                f"  Retracement 0.500 : {_format_price(state.fib_500)}",
+                f"  Retracement 0.618 : {_format_price(state.fib_618)}  ⭐ Altın oran",
+                f"  Uzantı 1.272 (T1) : {_format_price(state.fib_ext_1272)}",
+                f"  Uzantı 1.618 (T2) : {_format_price(state.fib_ext_1618)}  ⭐ Altın uzantı",
+                f"  Uzantı 2.618 (T3) : {_format_price(state.fib_ext_2618)}",
+            ]
+            # Whale strategy
+            whale_strat = next((m for m in (state.messages or []) if m.startswith("[WHALE_STRATEGY]")), None)
+            if whale_strat:
+                lines += ["", "🐋 BALİNA STRATEJİSİ:", f"  {whale_strat.replace('[WHALE_STRATEGY] ','')}"]
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            await progress.edit_text("\n".join(lines), disable_web_page_preview=True)
+        except Exception as exc:
+            logger.error(f"[TELEGRAM] /detay hatası: {exc}")
+            await progress.edit_text(f"⚠️ /detay {symbol} hatası: {str(exc)[:300]}")
+
     async def _run_pipeline(
         self,
         *,
@@ -759,6 +885,8 @@ class TelegramHandler:
         app.add_handler(CommandHandler("analiz", self.command_analiz))
         app.add_handler(CommandHandler("tarama", self.command_tarama))
         app.add_handler(CommandHandler("stats", self.command_stats))
+        app.add_handler(CommandHandler("backtesting", self.command_backtesting))
+        app.add_handler(CommandHandler("detay", self.command_detay))
         self._app = app
         return app
 

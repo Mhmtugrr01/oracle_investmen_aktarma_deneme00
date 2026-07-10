@@ -37,7 +37,37 @@ async def portfolio_tracker_loop():
             logger.info("[TRACKER] Aktif işlemler başarıyla tarandı ve güncellendi.")
         except Exception as e:
             logger.error(f"[TRACKER] Aktif işlem güncelleme hatası: {e}")
-        await asyncio.sleep(7200) # 4 saatte bir ( saniye) pusuya yat
+        await asyncio.sleep(7200)
+
+
+async def social_alpha_scheduler_loop():
+    """Her gün sabah 08:00'de (UTC+3 → UTC 05:00) agent_delta'yı tetikler."""
+    from agents.agent_delta import run_social_alpha_catcher
+    while True:
+        try:
+            import datetime as _dt
+            utc_now = _dt.datetime.now(_dt.timezone.utc)
+            target = utc_now.replace(hour=5, minute=0, second=0, microsecond=0)
+            if utc_now >= target:
+                target = target + _dt.timedelta(days=1)
+            sleep_secs = (target - utc_now).total_seconds()
+            logger.info(f"[DELTA_SCHEDULER] Bir sonraki sosyal tarama: {target.strftime('%Y-%m-%d %H:%M UTC')}")
+            await asyncio.sleep(sleep_secs)
+
+            # Telegram sender: handler üzerinden tüm chat'lere gönder
+            async def _tg_send(text: str) -> None:
+                if handler and handler._app:
+                    allowed = os.getenv("ALLOWED_USER_ID", "").strip()
+                    if allowed:
+                        try:
+                            await handler._app.bot.send_message(chat_id=int(allowed), text=text, disable_web_page_preview=True)
+                        except Exception as tg_exc:
+                            logger.error(f"[DELTA_SCHEDULER] Telegram gönderim hatası: {tg_exc}")
+
+            await run_social_alpha_catcher(telegram_sender=_tg_send)
+        except Exception as e:
+            logger.error(f"[DELTA_SCHEDULER] Sosyal tarama hatası: {e}")
+            await asyncio.sleep(3600)
 
 handler = None
 _BOT_LOCK_FD = None
@@ -88,6 +118,8 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(handler.start())
             # Canlı Portföy takip döngüsünü asenkron olarak tetikle!
             asyncio.create_task(portfolio_tracker_loop())
+            # Sabah 08:00 sosyal medya alpha tarama döngüsü
+            asyncio.create_task(social_alpha_scheduler_loop())
             logger.info("[SYSTEM] Telegram bot polling ve Portföy Takip döngüsü başlatıldı.")
     except Exception as exc:
         logger.error(f"[SYSTEM] Bot başlatma hatası: {exc}")

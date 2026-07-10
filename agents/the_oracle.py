@@ -54,6 +54,17 @@ async def run_the_oracle(state: OracleState) -> OracleState:
     _hist_bon = (_hist / 100.0) * 0.10
     _actual_conf = round(max(0.0, min(1.0, _base_conf - _var_pen + _div_bon + _hist_bon)), 3)
 
+    # ── Multi-TF hiyerarşi bonusu: haftalık + günlük aynı yön → güçlü teyit ─
+    _tf_biases = state.timeframe_biases or {}
+    _w_bias = str(_tf_biases.get("1w", "NEUTRAL")).upper()
+    _d_bias = str(_tf_biases.get("1d", "NEUTRAL")).upper()
+    _BULL_SET = {"BULLISH", "OVERSOLD", "ACCUMULATING"}
+    _BEAR_SET = {"BEARISH", "OVERBOUGHT", "DISTRIBUTING"}
+    if (_w_bias in _BULL_SET and _d_bias in _BULL_SET) or (_w_bias in _BEAR_SET and _d_bias in _BEAR_SET):
+        _actual_conf = round(min(1.0, _actual_conf + 0.08), 3)   # HTF consensus bonus
+    elif (_w_bias in _BULL_SET and _d_bias in _BEAR_SET) or (_w_bias in _BEAR_SET and _d_bias in _BULL_SET):
+        _actual_conf = round(max(0.0, _actual_conf - 0.05), 3)   # HTF conflict penalty
+
     # ── Extreme Fear / Greed Contrarian Bonusu (composite ile simetrik) ──────
     _fg = getattr(state, "fear_greed_value", None)
     if _fg is not None:

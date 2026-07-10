@@ -303,6 +303,38 @@ async def run_whale_hunter(state: OracleState) -> OracleState:
 
         whale_score = normalized_from_score(score_0_100)
 
+        # ── Remora / Çakal Strateji Tespiti ───────────────────────────────────
+        # Sweep tespit edildiyse ve regime birikim ise: Çakal (panik sonrası al)
+        # Sweep tespit + CVD uyumsuzluk + dip seviyesi: Remora (dip öncesi kuyu)
+        whale_strategy = "IZLE"
+        whale_strategy_note = ""
+        if sweep["event"] == "accumulation_sweep":
+            if cvd["event"] == "bullish_cvd_divergence":
+                whale_strategy = "REMORA"
+                _sweep_low = float(df["low"].tail(whale_conf.sweep_lookback_bars + 1).min())
+                _remora_entry = round(_sweep_low * 0.995, 8)
+                whale_strategy_note = (
+                    f"REMORA STRATEJİSİ: Likidite tuzağı {_sweep_low:.4f} altında. "
+                    f"Balina avını bekle, hedef giriş {_remora_entry:.4f} bölgesi."
+                )
+            else:
+                whale_strategy = "CAKAL"
+                _sweep_low = float(df["low"].tail(whale_conf.sweep_lookback_bars + 1).min())
+                _cakal_entry = round(_sweep_low * 1.005, 8)
+                whale_strategy_note = (
+                    f"ÇAKAL STRATEJİSİ: Likidite avı {_sweep_low:.4f} altında. "
+                    f"Panik satışı sonrası {_cakal_entry:.4f} bölgesinde al."
+                )
+        elif sweep["event"] == "distribution_sweep":
+            whale_strategy = "CAKAL_SHORT"
+            whale_strategy_note = (
+                f"ÇAKAL SHORT: Dağıtım sweep tespit edildi. "
+                f"Panik alımı sonrası kısa pozisyon değerlendirilebilir."
+            )
+
+        if whale_strategy_note:
+            agent_print("SYMBIOTIC_HUNTER", whale_strategy_note, MAGENTA)
+
         notes.append(
             (
                 f"Futures: funding={float(futures_data.get('funding_rate', 0.0) or 0.0):+.6f} "
@@ -320,6 +352,15 @@ async def run_whale_hunter(state: OracleState) -> OracleState:
         for note in notes:
             agent_print("SYMBIOTIC_HUNTER", note, MAGENTA)
 
+        whale_messages = [
+            (
+                f"[WHALE_HUNTER] score={score_0_100:.1f} norm={whale_score:+.3f} "
+                f"regime={regime} futures={futures_score:+.3f} strategy={whale_strategy}"
+            )
+        ]
+        if whale_strategy_note:
+            whale_messages.append(f"[WHALE_STRATEGY] {whale_strategy}: {whale_strategy_note}")
+
         return state.model_copy(
             update={
                 "current_node": AgentNode.WHALE_HUNTER,
@@ -330,12 +371,7 @@ async def run_whale_hunter(state: OracleState) -> OracleState:
                 "long_short_ratio": float(futures_data.get("long_short_ratio", 1.0) or 1.0),
                 "ls_signal": futures_data.get("ls_signal", "DENGELI"),
                 "open_interest": float(futures_data.get("open_interest", 0.0) or 0.0),
-                "messages": [
-                    (
-                        f"[WHALE_HUNTER] score={score_0_100:.1f} norm={whale_score:+.3f} "
-                        f"regime={regime} futures={futures_score:+.3f}"
-                    )
-                ],
+                "messages": whale_messages,
             }
         )
     except Exception as exc:

@@ -115,6 +115,11 @@ class OracleState(BaseModel):
     fib_382: Optional[float] = Field(default=None)
     fib_500: Optional[float] = Field(default=None)
     fib_618: Optional[float] = Field(default=None)
+    fib_ext_1272: Optional[float] = Field(default=None)   # TP T1 — 1.272 uzantısı
+    fib_ext_1618: Optional[float] = Field(default=None)   # TP T2 — Altın oran uzantısı
+    fib_ext_2618: Optional[float] = Field(default=None)   # TP T3 — Güçlü uzak hedef
+    fib_swing_high: Optional[float] = Field(default=None)
+    fib_swing_low: Optional[float] = Field(default=None)
     invalidation_level: Optional[float] = Field(default=None)
     trade_type: Optional[str] = Field(default=None)
     timeframe_alignment_score: Optional[float] = Field(default=None)

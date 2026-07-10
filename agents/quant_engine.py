@@ -463,7 +463,11 @@ def find_historical_levels(df: pd.DataFrame, lookback_days: int = 500, threshold
 
 
 def _compute_fibonacci_levels(df: pd.DataFrame, direction: str, lookback: int = 120) -> dict[str, float] | None:
-    """Compute 0.382 / 0.500 / 0.618 retracement levels from recent swing."""
+    """Compute retracement (0.382/0.500/0.618) AND extension (1.272/1.618/2.618) levels.
+
+    Retracement levels → optimal entry / support zones (fib_382, fib_500, fib_618).
+    Extension levels    → realistic TP targets T1/T2/T3 (fib_ext_1272, fib_ext_1618, fib_ext_2618).
+    """
     if df is None or df.empty or len(df) < 20:
         return None
     sample = df.tail(min(max(lookback, 20), len(df)))
@@ -473,21 +477,36 @@ def _compute_fibonacci_levels(df: pd.DataFrame, direction: str, lookback: int = 
         return None
 
     span = swing_high - swing_low
+    current_price = float(df["close"].iloc[-1])
+
     if direction == "SHORT":
-        # Bearish leg retrace levels measured upward from recent low.
+        # Retracement: upward from recent low
         fib_382 = swing_low + (span * 0.382)
         fib_500 = swing_low + (span * 0.500)
         fib_618 = swing_low + (span * 0.618)
+        # Extension: downward projections from swing_high
+        fib_ext_1272 = swing_high - (span * 1.272)
+        fib_ext_1618 = swing_high - (span * 1.618)
+        fib_ext_2618 = swing_high - (span * 2.618)
     else:
-        # Bullish leg pullback levels measured downward from recent high.
+        # Retracement: downward from recent high
         fib_382 = swing_high - (span * 0.382)
         fib_500 = swing_high - (span * 0.500)
         fib_618 = swing_high - (span * 0.618)
+        # Extension: upward projections from swing_low
+        fib_ext_1272 = swing_low + (span * 1.272)
+        fib_ext_1618 = swing_low + (span * 1.618)
+        fib_ext_2618 = swing_low + (span * 2.618)
 
     return {
         "fib_382": round(float(fib_382), 8),
         "fib_500": round(float(fib_500), 8),
         "fib_618": round(float(fib_618), 8),
+        "fib_ext_1272": round(float(fib_ext_1272), 8),
+        "fib_ext_1618": round(float(fib_ext_1618), 8),
+        "fib_ext_2618": round(float(fib_ext_2618), 8),
+        "swing_high": round(float(swing_high), 8),
+        "swing_low": round(float(swing_low), 8),
     }
 
 
@@ -951,6 +970,11 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "fib_382": fib_levels["fib_382"] if fib_levels else None,
                 "fib_500": fib_levels["fib_500"] if fib_levels else None,
                 "fib_618": fib_levels["fib_618"] if fib_levels else None,
+                "fib_ext_1272": fib_levels["fib_ext_1272"] if fib_levels else None,
+                "fib_ext_1618": fib_levels["fib_ext_1618"] if fib_levels else None,
+                "fib_ext_2618": fib_levels["fib_ext_2618"] if fib_levels else None,
+                "fib_swing_high": fib_levels["swing_high"] if fib_levels else None,
+                "fib_swing_low": fib_levels["swing_low"] if fib_levels else None,
                 "invalidation_level": long_levels["invalidation_level"],
                 "base_rr": long_levels["base_rr"],
                 "risk_reward_ratio": long_levels["base_rr"],

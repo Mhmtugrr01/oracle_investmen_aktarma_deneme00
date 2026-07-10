@@ -53,10 +53,11 @@ async def _gather_social_intel() -> str:
     return "FET breakout on daily. MSTR support holding."
 
 
-async def run_social_alpha_catcher() -> None:
+async def run_social_alpha_catcher(telegram_sender=None) -> None:
     """
     Her sabah 08:00'de tetiklenir.
-    Verileri toplar, Claude'a anti-shill yaptırır ve çıkan varlıkları Olympus Motoruna (compile_graph) fırlatır!
+    Verileri toplar, Claude'a anti-shill yaptırır ve çıkan varlıkları Olympus Motoruna fırlatır.
+    telegram_sender: async callable(text: str) — Telegram mesajı gönderir.
     """
     agent_print("AGENT_DELTA", "Sabah 08:00 Protokolü Devrede — Küresel 10 Analist taranıyor...", CYAN)
     
@@ -109,37 +110,63 @@ async def run_social_alpha_catcher() -> None:
                 report = DeltaReport(**report_data)
                 
                 logger.info("[AGENT_DELTA] Claude 3.5 Sonnet Anti-Shill Analizi Tamamlandı.")
-                print(f"\n{report.summary}\n")
-                print(f"{report.critique}\n")
-                
+
+                # ── Telegram'a sabah özeti gönder ────────────────────────────
+                if telegram_sender:
+                    summary_msg = (
+                        "☀️ OLYMPUS SABAH BRİFİNGİ — Sosyal Zeka Raporu\n\n"
+                        f"📋 ÖZET:\n{report.summary}\n\n"
+                        f"⚔️ ANTİ-SHİLL DEĞERLENDİRME:\n{report.critique}\n\n"
+                        f"🎯 ADAYLAR: {', '.join(report.candidates) if report.candidates else 'Yok'}\n\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    )
+                    try:
+                        await telegram_sender(summary_msg)
+                    except Exception as tg_exc:
+                        logger.error(f"[AGENT_DELTA] Telegram özet gönderilemedi: {tg_exc}")
+
                 # ── 🚀 BÜYÜK MOTOR ENTEGRASYONU (Otonom Sinyal Tetikleyicisi) ──
-                # Analiz edilmesi istenen tüm sembolleri alır, bizim asıl büyük Olympus LangGraph motorunun kucağına fırlatır!
                 try:
-                    from core.graph import compile_graph
+                    from core.graph import compile_oracle_graph
                 except ImportError:
-                    logger.error("[AGENT_DELTA] core.graph.compile_graph bulunamadı! Tetikleme iptal.")
+                    logger.error("[AGENT_DELTA] core.graph.compile_oracle_graph bulunamadı! Tetikleme iptal.")
                     return
 
+                graph = compile_oracle_graph()
+                no_signal_symbols = []
+
                 for symbol in report.candidates:
-                    # Sembolü normalize et (Örn: FET -> FET/USDT)
                     norm_symbol = symbol.strip().upper()
                     if "/" not in norm_symbol:
                         norm_symbol = f"{norm_symbol}/USDT"
-                        
-                    agent_print("AGENT_DELTA", f"🎯 HEDEF KİLİTLENDİ: {norm_symbol} Olympus Büyük Analiz Motoruna fırlatılıyor...", GREEN)
-                    
-                    # LangGraph pipeline'ı bu varlık için otonom olarak başlatılıyor!
+
+                    agent_print("AGENT_DELTA", f"🎯 HEDEF KİLİTLENDİ: {norm_symbol} Olympus motoruna gönderiliyor...", GREEN)
                     initial_state = OracleState(symbol=norm_symbol, query=f"social_trigger:{symbol}")
-                    
-                    # 5-Ajanlı büyük analiz motoru tetikleniyor! (Asenkron)
-                    final_state = await compile_graph.ainvoke(initial_state)
-                    
-                    # Karar analizi
-                    status = str(final_state.get("status", ""))
-                    if "ABORTED" in status or final_state.get("fatal_error"):
-                        error_print(f"❌ [DELTAMONITOR] {norm_symbol} süzgeçten elendi: Kompozit skor veya confluence yetersiz.")
-                    else:
-                        agent_print("DELTAMONITOR", f"🟢 [ONAYLANDI] {norm_symbol} tüm süzgeçleri geçti! Sinyal Kartı Telegram'a iletildi.", GREEN)
+
+                    try:
+                        final_state = await asyncio.wait_for(graph.ainvoke(initial_state), timeout=300.0)
+                        if hasattr(final_state, "model_dump"):
+                            st = final_state
+                        else:
+                            from core.types import OracleState as _OS
+                            st = _OS.model_validate(final_state)
+
+                        from bot.telegram_handler import format_oracle_response
+                        status_str = str(st.status.value).upper()
+                        if "ABORT" in status_str or "FAIL" in status_str or st.fatal_error:
+                            no_signal_symbols.append(norm_symbol)
+                        else:
+                            if telegram_sender:
+                                await telegram_sender(format_oracle_response(st))
+                    except Exception as pipe_exc:
+                        logger.error(f"[AGENT_DELTA] {norm_symbol} pipeline hatası: {pipe_exc}")
+                        no_signal_symbols.append(norm_symbol)
+
+                if no_signal_symbols and telegram_sender:
+                    await telegram_sender(
+                        f"📭 Sosyal medya adaylarından analiz edildi ancak fırsat bulunamadı:\n"
+                        + "\n".join(f"  • {s}" for s in no_signal_symbols)
+                    )
                         
     except Exception as exc:
         logger.error(f"[AGENT_DELTA] Otonom analiz ve tetikleme hatası: {exc}")
