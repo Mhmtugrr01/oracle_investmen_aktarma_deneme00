@@ -175,17 +175,21 @@ async def run_the_oracle(state: OracleState) -> OracleState:
     _BEAR = {"BEARISH", "STRONGLY_BEARISH", "OVERBOUGHT", "DISTRIBUTING"}
     _nb = sum(1 for x in _b if x in _BULL)
     _ns = sum(1 for x in _b if x in _BEAR)
-    # ── 🛡️ DUAL-CONCURRENCE LOOP: YÖN VE SEVİYE MUTABAKATI (R03 Phase 2) ──
-    # CEO yönü, bias oylarına ve kompozit skora göre özgürce mühürler!
-    if _nb > _ns:
+
+    # ── Yön Kararı: Composite Skoru Ŝırpılayıcı (Direction Gate) ───────────────
+    # Composite > 0.50 = net bullish ortam → SHORT üretilemez.
+    # SHORT için hem bias çoğunluğu hem composite < 0.50 şartı aranacak.
+    composite_is_bullish = float(composite) > 0.50
+    if _nb > _ns or (composite_is_bullish and _nb == _ns):
         direction = SignalDirection.LONG
         _sig_label = "LONG_FIRSAT"
-    elif _ns > _nb:
+    elif _ns > _nb and not composite_is_bullish:
         direction = SignalDirection.SHORT
         _sig_label = "SHORT_FIRSAT"
     else:
-        direction = SignalDirection.LONG if float(composite) >= 0 else SignalDirection.SHORT
-        _sig_label = "LONG_FIRSAT" if float(composite) >= 0 else "SHORT_FIRSAT"
+        # Tüm diğer durumlar: composite yönü baz al
+        direction = SignalDirection.LONG if composite_is_bullish else SignalDirection.SHORT
+        _sig_label = "LONG_FIRSAT" if composite_is_bullish else "SHORT_FIRSAT"
 
     # Veri Şatılını çöz ve CEO'nun seçtiği yöne ait matematiksel seviyeleri yükle!
     # Veri Şatılını çöz ve CEO'nun seçtiği yöne ait matematiksel seviyeleri yükle!

@@ -44,7 +44,28 @@ def _normalize_symbol(raw: str) -> str:
         return "BTC/USDT"
     if token in _RESERVED_ORACLE_TOKENS:
         return "__SCAN__"
-        
+
+    # ── Popüler isim → sembol haritası ──
+    _NAME_TO_TICKER: dict[str, str] = {
+        "COINBASE": "COIN",
+        "BITCOIN": "BTC/USDT",
+        "ETHEREUM": "ETH/USDT",
+        "SOLANA": "SOL/USDT",
+        "RIPPLE": "XRP/USDT",
+        "CARDANO": "ADA/USDT",
+        "NVIDIA": "NVDA",
+        "TESLA": "TSLA",
+        "MICROSTRATEGY": "MSTR",
+        "INTEL": "INTC",
+        "ALTINALTIN": "GC=F",
+        "GOLD": "GC=F",
+        "ALTIN": "GC=F",
+        "SILVER": "SI=F",
+        "CRUDE": "CL=F",
+    }
+    if token in _NAME_TO_TICKER:
+        return _NAME_TO_TICKER[token]
+
     # Eğer kullanıcı zaten "FETUSDT" yazdıysa sondaki "USDT"yi kırp (FETUSDT/USDT hatasını engelle!)
     if token.endswith("USDT") and "/" not in token:
         token = token[:-4] # "USDT" kısmını atar (FETUSDT -> FET kalır)
@@ -400,19 +421,41 @@ def format_oracle_response(state: OracleState) -> str:
         level_lines.append(f"   └ Hedef 3 (T3): ${state.t3:.4f}  [R:R 1:{state.t3_rr:.1f}] ← Uzun Vade")
     fib_lines = []
     if state.fib_382 is not None and state.fib_500 is not None and state.fib_618 is not None:
-        fib_lines = [
-            "\n🎯 ALIM BÖLGELERİ (FİBONACCI RETRACEMent):",
-            f"   0.382 → ${state.fib_382:.4f} (İlk destek)",
-            f"   0.500 → ${state.fib_500:.4f} (Güçlü destek)",
-            f"   0.618 → ${state.fib_618:.4f} ⭐ (Altın oran)",
-        ]
-        if state.fib_ext_1272 is not None:
-            fib_lines += [
-                "\n📤 TP HEDEFLERİ (FİBONACCI UZANTI):",
-                f"   1.272 → ${state.fib_ext_1272:.4f}  [T1 hedef]",
-                f"   1.618 → ${state.fib_ext_1618:.4f}  [T2 hedef] ⭐",
-                f"   2.618 → ${state.fib_ext_2618:.4f}  [T3 uzak hedef]",
+        is_short = state.signal_direction == SignalDirection.SHORT
+        if is_short:
+            # SHORT için: direnç/giriş seviyeleri (yukarı) + aşağı yönlü TP hedefleri
+            fib_lines = [
+                "\n🔴 DİRENÇ / GİRİŞ BÖLGELERİ (FİBONACCI SHORT):",
+                f"   0.382 → ${state.fib_382:.4f} (İlk direnç)",
+                f"   0.500 → ${state.fib_500:.4f} (Güçlü direnç)",
+                f"   0.618 → ${state.fib_618:.4f} ⭐ (Altın direnç — ideal SHORT girişi)",
             ]
+            if state.fib_swing_high is not None and state.fib_swing_low is not None:
+                span = state.fib_swing_high - state.fib_swing_low
+                tp1 = round(state.fib_swing_high - span * 1.272, 4)
+                tp2 = round(state.fib_swing_high - span * 1.618, 4)
+                tp3 = round(state.fib_swing_high - span * 2.618, 4)
+                fib_lines += [
+                    "\n📤 SHORT TP HEDEFLERİ (FİBONACCI UZANTI ↓):",
+                    f"   1.272 → ${tp1:.4f}  [T1 hedef ↓]",
+                    f"   1.618 → ${tp2:.4f}  [T2 hedef ↓] ⭐",
+                    f"   2.618 → ${tp3:.4f}  [T3 uzak hedef ↓]",
+                ]
+        else:
+            # LONG için: destek/alım seviyeleri + yukarı yönlü TP hedefleri
+            fib_lines = [
+                "\n🎯 ALIM BÖLGELERİ (FİBONACCI DESTEK):",
+                f"   0.382 → ${state.fib_382:.4f} (İlk destek)",
+                f"   0.500 → ${state.fib_500:.4f} (Güçlü destek)",
+                f"   0.618 → ${state.fib_618:.4f} ⭐ (Altın oran)",
+            ]
+            if state.fib_ext_1272 is not None:
+                fib_lines += [
+                    "\n📤 TP HEDEFLERİ (FİBONACCI UZANTI ↑):",
+                    f"   1.272 → ${state.fib_ext_1272:.4f}  [T1 hedef ↑]",
+                    f"   1.618 → ${state.fib_ext_1618:.4f}  [T2 hedef ↑] ⭐",
+                    f"   2.618 → ${state.fib_ext_2618:.4f}  [T3 uzak hedef ↑]",
+                ]
     level_block = "\n".join(level_lines) if level_lines else "   - Seviye hesaplanamadı"
     fib_block = "\n".join(fib_lines)
 
