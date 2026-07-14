@@ -19,6 +19,57 @@ from tools.market_data import (
     pct_change_over,
 )
 
+# ── Ekonomik Takvim Önbelleği ─────────────────────────────────────────────────
+import datetime as _dt
+_ECON_CALENDAR_CACHE: dict = {"data": [], "fetched_at": None}
+_ECON_CACHE_TTL_HOURS = 6
+
+
+async def _fetch_economic_calendar() -> list[dict]:
+    """
+    ForexFactory JSON feed üzerinden bu haftanın yüksek etkili ekonomik takvimini çeker.
+    Ücretsiz, API key gerektirmez. Fallback: boş liste (sinyal engeli tetiklenmez).
+    """
+    global _ECON_CALENDAR_CACHE
+    now = _dt.datetime.utcnow()
+    cached_at = _ECON_CALENDAR_CACHE.get("fetched_at")
+    if cached_at and (now - cached_at).total_seconds() < _ECON_CACHE_TTL_HOURS * 3600:
+        return _ECON_CALENDAR_CACHE["data"]
+
+    url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    try:
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    _ECON_CALENDAR_CACHE["data"] = data if isinstance(data, list) else []
+                    _ECON_CALENDAR_CACHE["fetched_at"] = now
+                    return _ECON_CALENDAR_CACHE["data"]
+    except Exception as e:
+        logger.warning(f"[MACRO] Ekonomik takvim çekilemedi: {e}")
+    return []
+
+
+def _check_high_impact_events_today(events: list[dict]) -> list[str]:
+    """Bugün açıklanacak yüksek etkili (Impact: High) olayları listeler."""
+    today_str = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+    high_impact = []
+    for ev in events:
+        # ForexFactory formatı: {"date": "Jul 14, 2026", "impact": "High", "title": "CPI m/m", ...}
+        ev_date_raw = str(ev.get("date", ""))
+        ev_impact = str(ev.get("impact", "")).lower()
+        ev_title = str(ev.get("title", ""))
+        if "high" not in ev_impact:
+            continue
+        try:
+            ev_dt = _dt.datetime.strptime(ev_date_raw, "%b %d, %Y")
+            if ev_dt.strftime("%Y-%m-%d") == today_str:
+                high_impact.append(ev_title)
+        except ValueError:
+            pass
+    return high_impact
+
 
 async def _fetch_coingecko_global() -> dict:
     url = "https://api.coingecko.com/api/v3/global"
@@ -201,7 +252,22 @@ async def run_macro_sentinel(state: OracleState) -> OracleState:
         dxy_df = bundle["DXY"]
         vix_df = bundle["VIX"]
         spy_df = bundle["SPY"]
-        
+
+        # ── 📅 EKONOMİK TAKVİM (Forex Factory — ücretsiz) ────────────────────
+        econ_events_today: list[str] = []
+        try:
+            calendar_data = await _fetch_economic_calendar()
+            econ_events_today = _check_high_impact_events_today(calendar_data)
+            if econ_events_today:
+                event_str = " | ".join(econ_events_today[:3])
+                warnings.append(
+                    f"[EKONOMİK TAKVİM] YÜKSEK ETKİLİ VERİ GÜNÜ: {event_str} "
+                    "— Bugün büyük pozisyon almaktan kaçının!"
+                )
+                agent_print("MACRO_SENTINEL", f"⚠️ Ekonomik Takvim: {event_str}", BLUE)
+        except Exception as ec_exc:
+            logger.warning(f"[MACRO] Ekonomik takvim işleme hatası: {ec_exc}")
+
         # ── 🇯🇵 JAPON YENİ CARRY-TRADE RISK MONITOR (R06) ──
         usdjpy_df = bundle.get("USDJPY")
         if usdjpy_df is not None:

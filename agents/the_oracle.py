@@ -118,6 +118,55 @@ async def run_the_oracle(state: OracleState) -> OracleState:
     )
     low_confidence = _actual_conf < (effective_confidence_threshold - 1e-9)
 
+    # ── Gri Bölge: 0.52-0.60 arası = "Piyasa Kararsız" — net sinyal değil ──────
+    # Yüksek R:R (>7.0) veya makro düşük risk ortamı bu bölgeyi geçebilir.
+    in_grey_zone = (
+        ceo_conf.min_composite_score <= composite <= 0.60
+        and (base_rr or 0.0) < 7.0
+        and not low_composite
+    )
+    if in_grey_zone:
+        grey_reason = (
+            f"• Gri Bölge (Kararsız Piyasa): Kompozit skor (%{composite*100:.0f}) netlik eşiğinin (%60) altında. "
+            f"R:R {base_rr:.2f} ile mevcut sinyal yeterince asimetrik değil. "
+            "Net kırılım bekleniyor — işlem yapılmadı."
+        )
+        reason_parts = [grey_reason]
+        reason = "\n".join(reason_parts)
+        new_retry = state.retry_count + 1
+        warn_print(f"CEO GRİ BÖLGE → {reason} | Rötuş #{new_retry}/1")
+        return state.model_copy(
+            update={
+                "current_node": AgentNode.THE_ORACLE,
+                "status": PipelineStatus.ABORTED,
+                "fatal_error": reason,
+                "ceo_approved": False,
+                "ceo_revision_reason": reason,
+                "messages": [f"[THE_ORACLE] GREY_ZONE composite={composite:.3f} rr={base_rr}"],
+            }
+        )
+
+    # ── Ekonomik Takvim Engeli: Kritik veri günleri eşiği yükseltilir ──────────
+    high_impact_event_today = any(
+        "[EKONOMİK TAKVİM]" in m and "YÜKSEK" in m
+        for m in state.messages
+    )
+    if high_impact_event_today and composite < 0.70:
+        econ_reason = (
+            f"• Ekonomik Takvim Engeli: Bugün yüksek etkili makro veri açıklaması var. "
+            f"Kritik veri günlerinde kompozit eşiği %70'e yükseltildi. "
+            f"Mevcut kompozit (%{composite*100:.0f}) bu eşiği geçemiyor."
+        )
+        return state.model_copy(
+            update={
+                "current_node": AgentNode.THE_ORACLE,
+                "status": PipelineStatus.ABORTED,
+                "fatal_error": econ_reason,
+                "ceo_approved": False,
+                "messages": [f"[THE_ORACLE] ECON_CALENDAR_VETO composite={composite:.3f}"],
+            }
+        )
+
     if inconsistent or low_rr or low_composite or low_confidence:
         reason_parts = []
         if inconsistent:

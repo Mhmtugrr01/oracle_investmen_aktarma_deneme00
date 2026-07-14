@@ -237,6 +237,17 @@ def _compute_tf_indicators(df: pd.DataFrame) -> dict[str, Any]:
         sma200_v = float(sma200.iloc[-1])
 
     obv_trend = "UP" if float(obv.iloc[-1]) >= float(obv.iloc[-5]) else "DOWN"
+
+    # ── VWAP: Trend teyit aracı ─────────────────────────────────────────────
+    # Fiyat VWAP üstünde → güç; altında → zayıflık
+    try:
+        vwap_series = ta.vwap(high=df_local["high"], low=df_local["low"],
+                               close=close, volume=df_local["volume"])
+        vwap_val = float(vwap_series.iloc[-1]) if vwap_series is not None and not vwap_series.empty else price
+    except Exception:
+        vwap_val = price
+    vwap_above = price > vwap_val
+
     bias = _classify_bias(price=price, ema50=ema50_v, sma200=sma200_v, rsi=rsi)
 
     return {
@@ -247,6 +258,8 @@ def _compute_tf_indicators(df: pd.DataFrame) -> dict[str, Any]:
         "ema21": round(ema21_v, 6),
         "ema50": round(ema50_v, 6),
         "sma200": round(sma200_v, 6),
+        "vwap": round(vwap_val, 6),
+        "vwap_above": vwap_above,
         "ma_fallback_used": fallback_sma200,
         "obv_trend": obv_trend,
         "bias": bias,
@@ -321,9 +334,9 @@ def _detect_price_breakout(df: pd.DataFrame) -> bool:
     
     # Kırılım Koşulu: Önceki bar trendin altındayken, güncel bar trendin üzerinde kapattı mı?
     if prev_close <= prev_trend_val and curr_close > curr_trend_val:
-        # Hacim Teyidi: Son barın hacmi, son 10 barın hacim ortalamasının üzerinde olmalı!
+        # Hacim Teyidi: Son barın hacmi, son 10 barın hacim ortalamasının 1.5x üzerinde olmalı
         recent_volume_avg = df["volume"].tail(10).mean()
-        if df["volume"].iloc[-1] > recent_volume_avg * 0.95:
+        if df["volume"].iloc[-1] > recent_volume_avg * 1.5:
             return True
             
     return False
@@ -681,6 +694,14 @@ def _technical_unit_from_timeframes(tf: dict[str, dict[str, Any]], divergence_bo
 
     # --- OBV (hacim yönü) ---
     score += 0.07 if h1["obv_trend"] == "UP" else -0.07
+
+    # --- VWAP teyidi (1H ve 4H) ---
+    h4_vwap_above = bool(h4.get("vwap_above", True))
+    h1_vwap_above = bool(h1.get("vwap_above", True))
+    if h4_vwap_above and h1_vwap_above:
+        score += 0.05   # Her iki kısa vadeli TF VWAP üstünde = güç
+    elif not h4_vwap_above and not h1_vwap_above:
+        score -= 0.05   # Her ikisi VWAP altında = zayıflık
 
     # --- BB pozisyon ---
     score += 0.03 if 0.20 < h4["bb_position"] < 0.80 else -0.03

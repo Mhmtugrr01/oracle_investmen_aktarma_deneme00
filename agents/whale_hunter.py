@@ -160,12 +160,15 @@ def _build_whale_score_0_100(
 async def _fetch_binance_futures_data(symbol: str) -> dict:
     """
     Binance Public API (API key gerekmez).
-    Kripto futures: OI (Açık Pozisyon) ve Funding Rate.
+    Kripto futures: OI değişimi, funding rate trend, long/short oranı.
     """
     if "/" not in symbol or "USDT" not in symbol:
         return {
             "oi_change": 0.0,
+            "oi_change_pct": 0.0,
+            "oi_signal": "UNAVAILABLE",
             "funding_rate": 0.0,
+            "funding_trend": "NOTR",
             "futures_score": 0.0,
             "futures_available": False,
         }
@@ -176,6 +179,7 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
     async def _pull(verify_ssl: bool) -> None:
         connector = aiohttp.TCPConnector(ssl=build_ssl_context(verify_ssl))
         async with aiohttp.ClientSession(connector=connector) as s:
+            # 1. Anlık Funding Rate
             funding_url = "https://fapi.binance.com/fapi/v1/premiumIndex"
             async with s.get(
                 funding_url,
@@ -188,18 +192,56 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
                 else:
                     results["funding_rate"] = 0.0
 
-            oi_url = "https://fapi.binance.com/fapi/v1/openInterest"
+            # 2. Tarihsel Funding Rate (son 8 dönem = 48 saat trend)
+            funding_hist_url = "https://fapi.binance.com/fapi/v1/fundingRate"
             async with s.get(
-                oi_url,
-                params={"symbol": futures_symbol},
+                funding_hist_url,
+                params={"symbol": futures_symbol, "limit": 8},
                 timeout=aiohttp.ClientTimeout(total=2),
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    results["open_interest"] = float(data.get("openInterest", 0))
+                    if isinstance(data, list) and len(data) >= 3:
+                        rates = [float(d.get("fundingRate", 0)) for d in data]
+                        # Trend: son 3 periyot önceki 3 perioda kıyasla artıyor mu?
+                        recent_avg = sum(rates[:3]) / 3
+                        older_avg = sum(rates[4:7]) / 3 if len(rates) >= 7 else recent_avg
+                        if recent_avg > older_avg * 1.3:
+                            results["funding_trend"] = "YUKSELIYOR"    # Long kalabalık oluyor = risk
+                        elif recent_avg < older_avg * 0.7:
+                            results["funding_trend"] = "DUSUYOR"       # Short squeeze potansiyeli
+                        else:
+                            results["funding_trend"] = "NOTR"
+                    else:
+                        results["funding_trend"] = "NOTR"
+                else:
+                    results["funding_trend"] = "NOTR"
+
+            # 3. OI Tarihsel (son 4 nokta ile gerçek OI değişimi)
+            oi_hist_url = "https://fapi.binance.com/futures/data/openInterestHist"
+            async with s.get(
+                oi_hist_url,
+                params={"symbol": futures_symbol, "period": "4h", "limit": 4},
+                timeout=aiohttp.ClientTimeout(total=2),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if isinstance(data, list) and len(data) >= 2:
+                        oi_latest = float(data[-1].get("sumOpenInterestValue", 0))
+                        oi_prev   = float(data[0].get("sumOpenInterestValue", 0))
+                        results["open_interest"] = oi_latest
+                        if oi_prev > 0:
+                            results["oi_change_pct"] = round((oi_latest - oi_prev) / oi_prev * 100.0, 2)
+                        else:
+                            results["oi_change_pct"] = 0.0
+                    else:
+                        results["open_interest"] = 0.0
+                        results["oi_change_pct"] = 0.0
                 else:
                     results["open_interest"] = 0.0
+                    results["oi_change_pct"] = 0.0
 
+            # 4. Long/Short oranı
             ls_url = "https://fapi.binance.com/futures/data/topLongShortPositionRatio"
             async with s.get(
                 ls_url,
@@ -225,17 +267,34 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
         logger.warning(f"[TIMEOUT/BYPASS] Futures Hata: Sistem donmasın diye gecirildi! {exc}")
         return {
             "oi_change": 0.0,
+            "oi_change_pct": 0.0,
+            "oi_signal": "UNAVAILABLE",
             "funding_rate": 0.0,
+            "funding_trend": "NOTR",
             "futures_score": 0.0,
             "long_short_ratio": 1.0,
             "futures_available": False,
         }
-       
 
     funding = float(results.get("funding_rate", 0.0) or 0.0)
     ls_ratio = float(results.get("long_short_ratio", 1.0) or 1.0)
+    oi_chg_pct = float(results.get("oi_change_pct", 0.0) or 0.0)
+    funding_trend = str(results.get("funding_trend", "NOTR"))
 
     futures_score = 0.0
+
+    # ── OI Değişim Analizi (Fiyat + OI birlikteliği için CEO'ya mesaj gönder) ──
+    oi_signal = "NOTR"
+    if oi_chg_pct > 3.0:
+        oi_signal = "OI_YUKSELIYOR"      # Yeni pozisyon geliyor — trend güçlü olabilir
+        futures_score += 0.05
+    elif oi_chg_pct < -3.0:
+        oi_signal = "OI_DUSUYOR"         # Pozisyon kapanıyor — momentum zayıflıyor
+        futures_score -= 0.05
+    results["oi_signal"] = oi_signal
+    results["oi_change"] = oi_chg_pct   # artık 0.0 değil, gerçek değer
+
+    # ── Funding Rate Anlık + Trend Birlikte Değerlendir ──
     if funding > 0.01:
         futures_score -= 0.15
         results["funding_signal"] = "ASIRI_LONG_RISK"
@@ -247,6 +306,10 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
         results["funding_signal"] = "SHORT_SQUEEZE_POTANSIYELI"
     else:
         results["funding_signal"] = "NOTR"
+
+    # Funding giderek artıyorsa ek ceza
+    if funding_trend == "YUKSELIYOR" and funding > 0.003:
+        futures_score -= 0.05   # Long tarafı git gide kalabalıklaşıyor = tehlike
 
     if ls_ratio > 2.0:
         futures_score -= 0.10
@@ -338,9 +401,11 @@ async def run_whale_hunter(state: OracleState) -> OracleState:
         notes.append(
             (
                 f"Futures: funding={float(futures_data.get('funding_rate', 0.0) or 0.0):+.6f} "
-                f"({futures_data.get('funding_signal', 'NOTR')}), "
+                f"({futures_data.get('funding_signal', 'NOTR')}) "
+                f"trend={futures_data.get('funding_trend', 'NOTR')}, "
                 f"L/S={float(futures_data.get('long_short_ratio', 1.0) or 1.0):.3f} "
-                f"({futures_data.get('ls_signal', 'DENGELI')})"
+                f"({futures_data.get('ls_signal', 'DENGELI')}), "
+                f"OI_degisim={futures_data.get('oi_change', 0.0):+.2f}% ({futures_data.get('oi_signal', 'NOTR')})"
             )
         )
 
