@@ -190,6 +190,243 @@ def _detect_market_structure(df: pd.DataFrame, lookback: int = 20) -> str:
     return "RANGING"
 
 
+def _detect_choch(df: pd.DataFrame, lookback: int = 20) -> dict[str, Any]:
+    """
+    Change of Character (CHoCH) tespiti — Yapısal kırılma analizi.
+    
+    Fitil (wick) ile değil, gövde (body) kapanışıyla yapılan kırılımları arar.
+    
+    Returns:
+        dict: {
+            'choch_detected': bool,
+            'direction': 'BULLISH' | 'BEARISH' | 'NONE',
+            'break_level': float,
+            'confirmation_bars': int,
+            'strength': 'STRONG' | 'MODERATE' | 'WEAK'
+        }
+    """
+    if df is None or len(df) < lookback + 5:
+        return {
+            'choch_detected': False,
+            'direction': 'NONE',
+            'break_level': 0.0,
+            'confirmation_bars': 0,
+            'strength': 'WEAK'
+        }
+    
+    # Son N barı al
+    recent = df.tail(lookback).copy()
+    closes = recent["close"].values
+    highs = recent["high"].values
+    lows = recent["low"].values
+    opens = recent["open"].values
+    
+    # Pivot noktaları bul (5-bar window ile)
+    pivot_highs: list[tuple[int, float]] = []  # (index, price)
+    pivot_lows: list[tuple[int, float]] = []
+    
+    for i in range(2, len(closes) - 2):
+        # Pivot High: önceki 2 ve sonraki 2 bardan yüksek
+        if highs[i] > max(highs[i-2:i]) and highs[i] > max(highs[i+1:i+3]):
+            pivot_highs.append((i, highs[i]))
+        # Pivot Low: önceki 2 ve sonraki 2 bardan düşük
+        if lows[i] < min(lows[i-2:i]) and lows[i] < min(lows[i+1:i+3]):
+            pivot_lows.append((i, lows[i]))
+    
+    if len(pivot_highs) < 2 or len(pivot_lows) < 2:
+        return {
+            'choch_detected': False,
+            'direction': 'NONE',
+            'break_level': 0.0,
+            'confirmation_bars': 0,
+            'strength': 'WEAK'
+        }
+    
+    # Son pivot high ve low'ları al
+    last_pivot_high = pivot_highs[-1][1]
+    last_pivot_low = pivot_lows[-1][1]
+    prev_pivot_high = pivot_highs[-2][1] if len(pivot_highs) >= 2 else last_pivot_high
+    prev_pivot_low = pivot_lows[-2][1] if len(pivot_lows) >= 2 else last_pivot_low
+    
+    # Güncel kapanış (gövde kontrolü için open-close kullanıyoruz)
+    current_close = closes[-1]
+    current_open = opens[-1]
+    
+    # CHoCH Tespiti:
+    # BULLISH CHoCH: Önceki LL (Lower Low) yapısından sonra, fiyat son pivot high'ı gövde ile kırdı
+    # BEARISH CHoCH: Önceki HH (Higher High) yapısından sonra, fiyat son pivot low'u gövde ile kırdı
+    
+    bullish_choch = False
+    bearish_choch = False
+    break_level = 0.0
+    
+    # Bullish CHoCH: Düşüş trendinde, son pivot high kırıldı (gövde ile)
+    if prev_pivot_low < last_pivot_low:  # LL yapısı var (düşüş trendi)
+        if current_close > last_pivot_high and current_close > current_open:
+            # Gövde ile kırılım (yeşil mum ve pivot high üstü kapanış)
+            bullish_choch = True
+            break_level = last_pivot_high
+    
+    # Bearish CHoCH: Yükseliş trendinde, son pivot low kırıldı (gövde ile)
+    if prev_pivot_high > last_pivot_high:  # HH yapısı var (yükseliş trendi)
+        if current_close < last_pivot_low and current_close < current_open:
+            # Gövde ile kırılım (kırmızı mum ve pivot low altı kapanış)
+            bearish_choch = True
+            break_level = last_pivot_low
+    
+    # Güç değerlendirmesi: Kırılma ne kadar net?
+    strength = "WEAK"
+    confirmation_bars = 0
+    
+    if bullish_choch or bearish_choch:
+        # Son 3 barın kırılma seviyesine göre konumu
+        if bullish_choch:
+            above_count = sum(1 for c in closes[-3:] if c > break_level)
+            confirmation_bars = above_count
+            if above_count >= 2:
+                strength = "STRONG"
+            elif above_count >= 1:
+                strength = "MODERATE"
+        elif bearish_choch:
+            below_count = sum(1 for c in closes[-3:] if c < break_level)
+            confirmation_bars = below_count
+            if below_count >= 2:
+                strength = "STRONG"
+            elif below_count >= 1:
+                strength = "MODERATE"
+    
+    return {
+        'choch_detected': bullish_choch or bearish_choch,
+        'direction': 'BULLISH' if bullish_choch else ('BEARISH' if bearish_choch else 'NONE'),
+        'break_level': round(break_level, 6),
+        'confirmation_bars': confirmation_bars,
+        'strength': strength
+    }
+
+
+def _detect_rsi_trendline_break(df: pd.DataFrame, rsi_period: int = 14, pivot_window: int = 5) -> dict[str, Any]:
+    """
+    RSI Trendline Break tespiti — RSI'ın kendi düşen/yükselen trend çizgisini kırması.
+    
+    En az 3 pivot noktası ile trend çizgisi hesaplanır.
+    
+    Returns:
+        dict: {
+            'trendline_break': bool,
+            'break_direction': 'BULLISH' | 'BEARISH' | 'NONE',
+            'pivot_count': int,
+            'trend_slope': float
+        }
+    """
+    if df is None or len(df) < 30:
+        return {
+            'trendline_break': False,
+            'break_direction': 'NONE',
+            'pivot_count': 0,
+            'trend_slope': 0.0
+        }
+    
+    # RSI hesapla
+    rsi_series = ta.rsi(df["close"], length=rsi_period)
+    if rsi_series is None or rsi_series.dropna().empty:
+        return {
+            'trendline_break': False,
+            'break_direction': 'NONE',
+            'pivot_count': 0,
+            'trend_slope': 0.0
+        }
+    
+    rsi_values = rsi_series.dropna().values
+    if len(rsi_values) < 20:
+        return {
+            'trendline_break': False,
+            'break_direction': 'NONE',
+            'pivot_count': 0,
+            'trend_slope': 0.0
+        }
+    
+    # Pivot high/low tespiti (RSI üzerinde)
+    pivot_highs: list[tuple[int, float]] = []
+    pivot_lows: list[tuple[int, float]] = []
+    
+    for i in range(pivot_window, len(rsi_values) - pivot_window):
+        # Pivot High
+        if rsi_values[i] == max(rsi_values[i-pivot_window:i+pivot_window+1]):
+            pivot_highs.append((i, rsi_values[i]))
+        # Pivot Low
+        if rsi_values[i] == min(rsi_values[i-pivot_window:i+pivot_window+1]):
+            pivot_lows.append((i, rsi_values[i]))
+    
+    # En az 3 pivot gerekli
+    if len(pivot_highs) < 3 and len(pivot_lows) < 3:
+        return {
+            'trendline_break': False,
+            'break_direction': 'NONE',
+            'pivot_count': max(len(pivot_highs), len(pivot_lows)),
+            'trend_slope': 0.0
+        }
+    
+    # Düşen trend çizgisi (pivot high'lar) için kırılım kontrolü
+    if len(pivot_highs) >= 3:
+        # Son 3 pivot high'ı al
+        recent_highs = pivot_highs[-3:]
+        x = np.array([p[0] for p in recent_highs])
+        y = np.array([p[1] for p in recent_highs])
+        
+        # Lineer regresyon ile trend çizgisi
+        if len(x) >= 2:
+            slope, intercept = np.polyfit(x, y, 1)
+            
+            # Düşen trend mi? (slope < 0)
+            if slope < 0:
+                # Güncel RSI değeri
+                current_rsi = rsi_values[-1]
+                current_idx = len(rsi_values) - 1
+                
+                # Trend çizgisi değeri
+                trend_value = slope * current_idx + intercept
+                
+                # RSI trend çizgisini yukarı kırdı mı?
+                if current_rsi > trend_value and rsi_values[-2] <= (slope * (current_idx - 1) + intercept):
+                    return {
+                        'trendline_break': True,
+                        'break_direction': 'BULLISH',
+                        'pivot_count': len(pivot_highs),
+                        'trend_slope': round(slope, 4)
+                    }
+    
+    # Yükselen trend çizgisi (pivot low'lar) için kırılım kontrolü
+    if len(pivot_lows) >= 3:
+        recent_lows = pivot_lows[-3:]
+        x = np.array([p[0] for p in recent_lows])
+        y = np.array([p[1] for p in recent_lows])
+        
+        if len(x) >= 2:
+            slope, intercept = np.polyfit(x, y, 1)
+            
+            # Yükselen trend mi? (slope > 0)
+            if slope > 0:
+                current_rsi = rsi_values[-1]
+                current_idx = len(rsi_values) - 1
+                trend_value = slope * current_idx + intercept
+                
+                # RSI trend çizgisini aşağı kırdı mı?
+                if current_rsi < trend_value and rsi_values[-2] >= (slope * (current_idx - 1) + intercept):
+                    return {
+                        'trendline_break': True,
+                        'break_direction': 'BEARISH',
+                        'pivot_count': len(pivot_lows),
+                        'trend_slope': round(slope, 4)
+                    }
+    
+    return {
+        'trendline_break': False,
+        'break_direction': 'NONE',
+        'pivot_count': max(len(pivot_highs), len(pivot_lows)),
+        'trend_slope': 0.0
+    }
+
+
 def _classify_bias(price: float, ema50: float, sma200: float, rsi: float,
                    market_structure: str = "RANGING") -> str:
     """Bias tespiti: Piyasa yapısı + EMA/SMA + RSI kombine karar."""
@@ -295,7 +532,19 @@ def _compute_tf_indicators(df: pd.DataFrame) -> dict[str, Any]:
         vwap_val = price
     vwap_above = price > vwap_val
 
-    bias = _classify_bias(price=price, ema50=ema50_v, sma200=sma200_v, rsi=rsi)
+    # ── CHoCH ve RSI Trendline Break Analizi ────────────────────────────────
+    choch_result = _detect_choch(df_local, lookback=20)
+    rsi_trendline = _detect_rsi_trendline_break(df_local, rsi_period=14)
+    
+    # Market structure'ı CHoCH ile güçlendir
+    market_structure = _detect_market_structure(df_local, lookback=20)
+    if choch_result['choch_detected']:
+        if choch_result['direction'] == 'BULLISH' and choch_result['strength'] == 'STRONG':
+            market_structure = "BULLISH_STRUCTURE"  # Override
+        elif choch_result['direction'] == 'BEARISH' and choch_result['strength'] == 'STRONG':
+            market_structure = "BEARISH_STRUCTURE"  # Override
+
+    bias = _classify_bias(price=price, ema50=ema50_v, sma200=sma200_v, rsi=rsi, market_structure=market_structure)
 
     return {
         "price": price,
@@ -311,6 +560,12 @@ def _compute_tf_indicators(df: pd.DataFrame) -> dict[str, Any]:
         "ma_fallback_used": fallback_sma200,
         "obv_trend": obv_trend,
         "bias": bias,
+        "choch_detected": choch_result['choch_detected'],
+        "choch_direction": choch_result['direction'],
+        "choch_strength": choch_result['strength'],
+        "choch_break_level": choch_result['break_level'],
+        "rsi_trendline_break": rsi_trendline['trendline_break'],
+        "rsi_break_direction": rsi_trendline['break_direction'],
     }
 
 
@@ -1113,6 +1368,13 @@ async def run_quant_engine(state: OracleState) -> OracleState:
         agent_print("QUANT_ENGINE", f"Alignment={alignment_score:.2f} ({aligned_count}/4) | TradeType={trade_type}", GREEN)
         agent_print("QUANT_ENGINE", f"Divergence D/W={divergence_daily}/{divergence_weekly}", BLUE)
         agent_print("QUANT_ENGINE", f"Historical similarity={historical_similarity_score:.1f}/100 | {pattern_outcome_bias}", GREEN)
+        
+        # CHoCH ve RSI Trendline logları
+        h4_metrics = tf_metrics.get("4h", {})
+        if h4_metrics.get("choch_detected"):
+            agent_print("QUANT_ENGINE", f"🔥 CHoCH: {h4_metrics.get('choch_direction')} | Güç: {h4_metrics.get('choch_strength')}", GREEN)
+        if h4_metrics.get("rsi_trendline_break"):
+            agent_print("QUANT_ENGINE", f"📈 RSI Trendline Break: {h4_metrics.get('rsi_break_direction')}", GREEN)
 
         return state.model_copy(
             update={
@@ -1155,6 +1417,13 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "signal_formation_score": formation_score,
                 "signal_formation_reason": formation_reason,
                 "signal_eta_estimate": formation_eta,
+                # ── CHoCH ve RSI Trendline Break (yeni) ──
+                "choch_detected": h4_metrics.get("choch_detected"),
+                "choch_direction": h4_metrics.get("choch_direction"),
+                "choch_strength": h4_metrics.get("choch_strength"),
+                "choch_break_level": h4_metrics.get("choch_break_level"),
+                "rsi_trendline_break": h4_metrics.get("rsi_trendline_break"),
+                "rsi_break_direction": h4_metrics.get("rsi_break_direction"),
                 "messages": [
                     f"[QUANT_ENGINE] tf_bias={biases} align={alignment_score:.2f} trade={trade_type} "
                     f"base_rr={long_levels['base_rr']} hist_score={historical_similarity_score:.1f} "
@@ -1162,7 +1431,11 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                     *[f"[QUANT_ENGINE] WARN {w}" for w in dominance_warnings],
                     f"[DYNAMIC_TARGET] {long_levels['dynamic_trendline_target']}", # Geometrik hedef şatılı
                     levels_shuttle # Veri Şatılı güvenli mesaj kuyruğuna yükleniyor!
-                ],
+                ] + ([
+                    f"[CHOCH] {h4_metrics.get('choch_direction')} @ {h4_metrics.get('choch_break_level')} | Güç: {h4_metrics.get('choch_strength')}"
+                ] if h4_metrics.get("choch_detected") else []) + ([
+                    f"[RSI_TRENDLINE] {h4_metrics.get('rsi_break_direction')} kırılımı"
+                ] if h4_metrics.get("rsi_trendline_break") else []),
             }
         )
 

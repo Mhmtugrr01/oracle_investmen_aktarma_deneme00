@@ -731,71 +731,69 @@ class TelegramHandler:
         if not update.effective_message:
             return
 
-        asset_filter = _normalize_symbol(context.args[0]) if context.args else None
-        db_path = Path("data") / "portfolio.db"
-
-        if not db_path.exists():
-            await update.effective_message.reply_text(
-                "📊 /stats\nHenüz takip verisi yok. Önce en az bir sinyal üretilmeli."
-            )
-            return
-
+        # Yeni Signal Tracker modülünü kullan
         try:
-            conn = sqlite3.connect(str(db_path))
-            cur = conn.cursor()
-
-            params: tuple = ()
-            where = ""
-            if asset_filter:
-                where = "WHERE asset = ?"
-                params = (asset_filter,)
-
-            cur.execute(
-                f"SELECT asset, direction, entry_price, stop_loss, t2, status, pnl, timestamp "
-                f"FROM trades {where} ORDER BY id DESC LIMIT 30",
-                params,
-            )
-            rows = cur.fetchall()
-            conn.close()
-
-            if not rows:
-                target = asset_filter or "genel"
-                await update.effective_message.reply_text(f"📊 /stats {target}\nKayıt bulunamadı.")
+            from core.signal_tracker import get_signal_tracker
+            
+            tracker = get_signal_tracker()
+            stats = tracker.get_statistics(days=30)
+            
+            if stats['total_signals'] == 0:
+                await update.effective_message.reply_text(
+                    "📊 /stats\nHenüz takip verisi yok. Önce en az bir sinyal üretilmeli."
+                )
                 return
-
-            closed = [r for r in rows if str(r[5]).upper() in {"WIN", "LOSS"}]
-            wins = sum(1 for r in closed if str(r[5]).upper() == "WIN")
-            losses = sum(1 for r in closed if str(r[5]).upper() == "LOSS")
-            closed_count = len(closed)
-            win_rate = (wins / closed_count * 100.0) if closed_count else 0.0
-
-            rr_values: list[float] = []
-            for r in rows:
-                entry, stop, t2 = float(r[2]), float(r[3]), float(r[4])
-                risk = abs(entry - stop)
-                if risk <= 0:
-                    continue
-                rr = abs(t2 - entry) / risk
-                rr_values.append(rr)
-
-            avg_rr = sum(rr_values) / len(rr_values) if rr_values else 0.0
-            best_pnl = max(float(r[6]) for r in rows)
-            worst_pnl = min(float(r[6]) for r in rows)
-            last = rows[0]
-            last_status = "✅" if str(last[5]).upper() == "WIN" else ("❌" if str(last[5]).upper() == "LOSS" else "⏳")
-
-            scope = asset_filter or "GENEL"
-            msg = (
-                f"📊 OLYMPUS STATS — {scope}\n"
-                f"Son 30 kayıt: {len(rows)} | Kapanan: {closed_count}\n"
-                f"İsabet: {wins} doğru / {losses} yanlış (%{win_rate:.1f})\n"
-                f"Ort. R:R: {avg_rr:.2f}\n"
-                f"En iyi PnL: %{best_pnl:+.2f} | En kötü PnL: %{worst_pnl:+.2f}\n"
-                f"Son sinyal: {last[7]} | {last[0]} | {last[1]} | {last_status} {last[5]}"
-            )
-            await update.effective_message.reply_text(msg)
+            
+            # Formatlı istatistik mesajı
+            msg_lines = [
+                "📊 OLYMPUS SIGNAL TRACKER — Son 30 Gün",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"📈 Toplam Sinyal: {stats['total_signals']}",
+                f"✅ Kapanan: {stats['closed_signals']} | ⏳ Açık: {stats['open_signals']}",
+                f"🎯 Win Rate: %{stats['win_rate']:.1f}",
+                f"💰 Ortalama PnL: %{stats['avg_pnl']:+.2f}",
+                "",
+                "📊 YÖN BAZLI PERFORMANS:",
+            ]
+            
+            for direction, data in stats.get('by_direction', {}).items():
+                if data['total'] > 0:
+                    msg_lines.append(
+                        f"  {direction}: {data['wins']}/{data['total']} "
+                        f"(%{data['win_rate']:.1f})"
+                    )
+            
+            # CHoCH istatistikleri
+            choch_data = stats.get('by_choch', {}).get('with_choch', {})
+            if choch_data.get('total', 0) > 0:
+                msg_lines.extend([
+                    "",
+                    "🔥 CHoCH (Yapısal Kırılma) İstatistikleri:",
+                    f"  CHoCH'li Sinyaller: {choch_data['wins']}/{choch_data['total']} "
+                    f"(%{choch_data['win_rate']:.1f})",
+                ])
+            
+            # RSI Trendline Break istatistikleri
+            rsi_data = stats.get('by_rsi_break', {}).get('with_rsi_break', {})
+            if rsi_data.get('total', 0) > 0:
+                msg_lines.extend([
+                    "",
+                    "📈 RSI Trendline Break İstatistikleri:",
+                    f"  RSI Break'li Sinyaller: {rsi_data['wins']}/{rsi_data['total']} "
+                    f"(%{rsi_data['win_rate']:.1f})",
+                ])
+            
+            msg_lines.extend([
+                "",
+                f"🕐 Son Güncelleme: {stats['last_updated'][:16]}",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            ])
+            
+            await update.effective_message.reply_text("\n".join(msg_lines))
+            
         except Exception as exc:
-            await update.effective_message.reply_text(f"/stats hatası: {exc}")
+            logger.error(f"[TELEGRAM] /stats hatası: {exc}")
+            await update.effective_message.reply_text(f"📊 /stats hatası: {exc}")
 
     async def command_backtesting(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Geçmiş sinyal win-rate, ortalama R:R ve varlık bazlı başarı özeti."""

@@ -212,6 +212,35 @@ async def run_the_oracle(state: OracleState) -> OracleState:
         )
 
     tf_biases = state.timeframe_biases or {}
+    # ── CHoCH ve RSI Trendline Break Bonusu ─────────────────────────────────
+    # Güçlü yapısal kırılma + RSI trendline break = yüksek kaliteli sinyal
+    _choch_bonus = 0.0
+    _rsi_break_bonus = 0.0
+    _structure_quality = "NORMAL"
+    
+    if getattr(state, "choch_detected", False):
+        if getattr(state, "choch_strength", "") == "STRONG":
+            if getattr(state, "choch_direction", "") == "BULLISH":
+                _choch_bonus = 0.08
+                _structure_quality = "CHoCH_STRONG_BULLISH"
+            elif getattr(state, "choch_direction", "") == "BEARISH":
+                _choch_bonus = -0.08
+                _structure_quality = "CHoCH_STRONG_BEARISH"
+    
+    if getattr(state, "rsi_trendline_break", False):
+        if getattr(state, "rsi_break_direction", "") == "BULLISH":
+            _rsi_break_bonus = 0.05
+        elif getattr(state, "rsi_break_direction", "") == "BEARISH":
+            _rsi_break_bonus = -0.05
+    
+    # Composite skora yapısal bonusları ekle
+    composite = composite + _choch_bonus + _rsi_break_bonus
+    composite = round(max(0.0, min(1.0, composite)), 4)
+    
+    # Yapısal kalite logla
+    if _structure_quality != "NORMAL":
+        agent_print("THE_ORACLE", f"🏗️ Yapısal Kalite: {_structure_quality} | Bonus: {_choch_bonus + _rsi_break_bonus:+.3f}", CYAN)
+
     # ── Bias oylarından yön belirle (trade_type/signal_label GÖRMEZDEN GEL) ──
     _b = [
         (tf_biases.get("1w", "NEUTRAL") or "NEUTRAL").upper(),

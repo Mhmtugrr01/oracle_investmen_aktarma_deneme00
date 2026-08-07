@@ -145,6 +145,20 @@ class OracleState(BaseModel):
     signal_eta_estimate: Optional[str] = Field(default=None)
     # Sinyal kalite yıldız puanı (1-5): whale+fundamental+makro uyum derecesi
     signal_quality_stars: Optional[int] = Field(default=None, ge=1, le=5)
+    
+    # ── Yapısal Kırılma (CHoCH) ve RSI Trendline Break ─────────────────────
+    choch_detected: Optional[bool] = Field(default=None)
+    choch_direction: Optional[str] = Field(default=None)  # 'BULLISH' | 'BEARISH' | 'NONE'
+    choch_strength: Optional[str] = Field(default=None)   # 'STRONG' | 'MODERATE' | 'WEAK'
+    choch_break_level: Optional[float] = Field(default=None)
+    rsi_trendline_break: Optional[bool] = Field(default=None)
+    rsi_break_direction: Optional[str] = Field(default=None)  # 'BULLISH' | 'BEARISH' | 'NONE'
+    
+    # ── Korelasyon Kümeleme Sonuçları ──────────────────────────────────────
+    cluster_id: Optional[int] = Field(default=None)
+    cluster_theme: Optional[str] = Field(default=None)
+    cluster_leader_rank: Optional[int] = Field(default=None, ge=1)  # 1 = lider
+    alpha_leader_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
     # ── Denetim izi ──────────────────────────────────────────────────
     messages: Annotated[list[str], _merge_messages] = Field(default_factory=list)
@@ -258,6 +272,27 @@ class OracleState(BaseModel):
                 score += 0.06   # Extreme Fear = tarihsel alım bölgesi
             elif int(fg) >= 75:
                 score -= 0.04   # Extreme Greed = dikkat
+        
+        # ── CHoCH ve RSI Trendline Break Bonusu ─────────────────────────
+        # Güçlü yapısal kırılma + RSI trendline break = yüksek kaliteli sinyal
+        if self.choch_detected and self.choch_strength == "STRONG":
+            if self.choch_direction == "BULLISH":
+                score += 0.08  # Güçlü yapısal değişim bonusu
+            elif self.choch_direction == "BEARISH":
+                score -= 0.08  # Güçlü yapısal değişim cezası
+        
+        if self.rsi_trendline_break:
+            if self.rsi_break_direction == "BULLISH":
+                score += 0.05  # RSI momentum kırılımı
+            elif self.rsi_break_direction == "BEARISH":
+                score -= 0.05  # RSI momentum kırılımı
+        
+        # ── Küme Liderlik Bonusu ─────────────────────────────────────────
+        # Küme lideri (rank 1) ekstra puan alır
+        if self.cluster_leader_rank == 1:
+            score += 0.03  # Lider bonusu
+        elif self.cluster_leader_rank == 2:
+            score += 0.015  # İkinci lider bonusu
 
         return round(max(0.0, min(1.0, score)), 4)
 
