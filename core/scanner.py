@@ -109,8 +109,10 @@ class OracleScanner:
             curr_rsi = float(rsi.iloc[-1])
             prev_rsi = float(rsi.iloc[-2])
             
-            if curr_rsi >= 40.0: return 0.0 
-            if curr_rsi <= prev_rsi: return 0.0 
+            # RSI 55 altında + yön aldıysa fırsat penceresi açık
+            # Eski 40 eşiği 500 varlıkta hiçbir fırsat bırakmıyordu
+            if curr_rsi >= 55.0: return 0.0
+            if curr_rsi <= prev_rsi: return 0.0
             
             momentum_score = 35.0  
 

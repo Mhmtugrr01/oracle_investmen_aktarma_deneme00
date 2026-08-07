@@ -16,13 +16,15 @@ risk:
     take_profit_multiplier: 3.0
 
 ceo:
-  max_score_spread: 0.70
+  max_score_spread: 1.10
   long_threshold: 0.15
   short_threshold: -0.15
-  min_composite_score: 0.52
-  confidence_threshold: 0.50
+  min_composite_score: 0.65   # ESKİ: 0.52 → YENİ: 0.65 (düşük kaliteli sinyalleri bastır)
+  confidence_threshold: 0.60  # ESKİ: 0.50 → YENİ: 0.60
   confidence_boost: 0.25
   max_retries: 1
+  # TF uyum zorunluluğu: en az bu kadar TF aynı yönde olmadan sinyal üretilmez
+  min_aligned_timeframes: 3
 
 red_team:
   black_swan_spread: 1.20
@@ -99,6 +101,21 @@ asset_universe:
     - "GC=F"
     - "SI=F"
     - "CL=F"
+
+bist:
+  # TCMB politika faizi (manuel güncelleme)
+  tcmb_rate: 46.0
+  # USDTRY %2 haftalık artış = ağır bearish context eşiği
+  usdtry_bearish_threshold_pct: 2.0
+
+# Sinyal kalite filtresi
+signal_quality:
+  # Haftalık bearish iken günlük oversold bounce = SHORT_TERM_BOUNCE_ONLY (tam AL sinyali değil)
+  htf_conflict_forces_bounce_label: true
+  # Formation skoru bu değerin üzerindeyse SIGNAL FORMING bildirimi gönderilir
+  formation_notify_threshold: 60
+  # Sinyal üretimi için zorunlu minimum timeframe uyum sayısı (4 TF içinden)
+  min_tf_alignment_for_signal: 3
 
 scan_schedule:
   full_scan_interval_hours: 4

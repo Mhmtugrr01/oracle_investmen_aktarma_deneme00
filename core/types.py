@@ -137,6 +137,14 @@ class OracleState(BaseModel):
     fear_greed_value: Optional[int] = Field(default=None)
     consensus_variance: Optional[float] = Field(default=None, ge=0.0)
     ma_fallback_used: Optional[bool] = Field(default=None)
+    fear_greed_label: Optional[str] = Field(default=None)
+
+    # ── Pre-signal formation (sinyal oluşum takibi) ────────────────────────
+    signal_formation_score: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    signal_formation_reason: Optional[str] = Field(default=None)
+    signal_eta_estimate: Optional[str] = Field(default=None)
+    # Sinyal kalite yıldız puanı (1-5): whale+fundamental+makro uyum derecesi
+    signal_quality_stars: Optional[int] = Field(default=None, ge=1, le=5)
 
     # ── Denetim izi ──────────────────────────────────────────────────
     messages: Annotated[list[str], _merge_messages] = Field(default_factory=list)
@@ -211,9 +219,15 @@ class OracleState(BaseModel):
         sentiment_weight = float(config_weights.get("sentiment", 0.10))
 
         macro_component = _to_unit(self.macro_score)
-        if "/" in self.symbol and self.cross_asset_score is not None:
+        if self.cross_asset_score is not None:
             cross_unit = max(0.0, min(100.0, float(self.cross_asset_score))) / 100.0
             macro_component = macro_component * 0.5 + cross_unit * 0.5
+
+        # whale_score=None ise (kripto olmayan varlıklarda) ağırlığı diğer skora dağıt
+        if self.whale_score is None:
+            quant_weight += whale_weight * 0.6
+            fundamental_weight += whale_weight * 0.4
+            whale_weight = 0.0
 
         score = (
             macro_component * macro_weight

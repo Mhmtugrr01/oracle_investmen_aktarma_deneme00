@@ -240,18 +240,18 @@ def _format_abort_message(state: OracleState, reason: str) -> str:
     if hist_bias and hist_score is not None:
         hist_text = f"\n🔄 Tarihsel Benzerlik: {int(hist_score)}/100 → {hist_bias}"
 
-    if "KOMPOZİT" in reason or composite < min_composite:
+    if "KOMPOZİT" in reason or "Kompozit" in reason or composite < min_composite:
         neden = (
             f"Kompozit skor {composite_pct}% (minimum {int(min_composite * 100)}% gerekli). "
             f"Ajanlar arası fikir ayrılığı yüksek (variance: {consensus_variance:.2f}). "
             f"Timeframe'ler hizalanmamış ({alignment_pct}%)."
         )
-    elif "GÜVEN" in reason or confidence < min_confidence:
+    elif "GÜVEN" in reason or "Güven" in reason or confidence < min_confidence:
         neden = (
             f"Sistem güven skoru {confidence_pct}% (minimum {int(min_confidence * 100)}% gerekli). "
             f"Sinyalin güvenilirliği yetersiz."
         )
-    elif "R:R" in reason:
+    elif "Yetersiz Asimetri" in reason or (base_rr is not None and base_rr < min_rr):
         rr_val = f"{base_rr:.2f}" if base_rr is not None else "hesaplanamadı"
         neden = (
             f"Risk/Ödül oranı {rr_val} (minimum {min_rr:.1f} gerekli). "
@@ -263,6 +263,24 @@ def _format_abort_message(state: OracleState, reason: str) -> str:
     alignment_tf_count = int(alignment * 4)
     consistency_pct = int((1 - min(consensus_variance, 1.0)) * 100)
     rr_display = f"{base_rr:.2f}" if base_rr is not None else "N/A"
+
+    # Pre-signal formation bilgisi
+    formation_score = getattr(state, "signal_formation_score", None)
+    formation_reason = getattr(state, "signal_formation_reason", None)
+    formation_eta = getattr(state, "signal_eta_estimate", None)
+    quality_stars = getattr(state, "signal_quality_stars", None)
+    stars_str = ("★" * quality_stars + "☆" * (5 - quality_stars)) if quality_stars else ""
+
+    formation_block = ""
+    if formation_score is not None:
+        if formation_score >= 60:
+            formation_block = (
+                f"\n\n⚡ SİNYAL OLUŞUYOR ({formation_score:.0f}/100):\n"
+                f"  {formation_reason or ''}\n"
+                f"  ⏱ Tahmini: {formation_eta or ''}"
+            )
+        else:
+            formation_block = f"\n\n📐 Sinyal Olgunluğu: {formation_score:.0f}/100 — {formation_eta or 'Henüz uzak'}"
 
     msg = f"""🔔 OLYMPUS ORACLE — ANALİZ TAMAMLANDI
 
@@ -294,6 +312,7 @@ def _format_abort_message(state: OracleState, reason: str) -> str:
         f"  4 Saatlik → {h4}\n"
         f"  1 Saatlik → {h1}"
         f"{hist_text}"
+        f"{formation_block}"
         f"{warning_text}\n\n"
         "💡 CEO NOTU:\n"
         f'"Piyasa şu an çatışmalı sinyaller üretiyor. '
@@ -459,6 +478,11 @@ def format_oracle_response(state: OracleState) -> str:
     level_block = "\n".join(level_lines) if level_lines else "   - Seviye hesaplanamadı"
     fib_block = "\n".join(fib_lines)
 
+    # Sinyal kalite yıldızları
+    quality_stars = getattr(state, "signal_quality_stars", None)
+    stars_str = ("★" * quality_stars + "☆" * (5 - quality_stars)) if quality_stars else ""
+    stars_line = f"⭐ SİNYAL KALİTESİ: {stars_str} ({quality_stars}/5)\n" if stars_str else ""
+
     return (
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "𝗢𝗟𝗬𝗠𝗣𝗨𝗦 𝗢𝗥𝗔𝗖𝗟𝗘 — SİNYAL KARTI\n"
@@ -467,6 +491,7 @@ def format_oracle_response(state: OracleState) -> str:
         f"🕐 ANALİZ: {timestamp}\n\n"
         f"⚡ KARAR: {signal_emoji} {signal}\n"
         f"📊 KOMPOZİT SKOR: {score_pct:.1f}%\n"
+        f"{stars_line}"
         f"🎯 CONFLUENCE: {confluence_count}/5\n"
         f"📐 TIMEFRAME HIZALAMASI: {tf_align*100:.1f}% ({aligned_count}/4)\n\n"
         "📈 TIMEFRAME TABLO:\n"

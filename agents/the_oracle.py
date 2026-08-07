@@ -118,17 +118,16 @@ async def run_the_oracle(state: OracleState) -> OracleState:
     )
     low_confidence = _actual_conf < (effective_confidence_threshold - 1e-9)
 
-    # ── Gri Bölge: 0.52-0.60 arası = "Piyasa Kararsız" — net sinyal değil ──────
-    # Yüksek R:R (>7.0) veya makro düşük risk ortamı bu bölgeyi geçebilir.
+    # ── Gri Bölge: 0.65-0.70 arası = "Piyasa Kararsız" — net sinyal değil ────────
+    # Yüksek R:R (>6.0) sinyal gri bölgeyi geçebilir.
     in_grey_zone = (
-        ceo_conf.min_composite_score <= composite <= 0.60
-        and (base_rr or 0.0) < 7.0
+        ceo_conf.min_composite_score <= composite <= 0.70
+        and (base_rr or 0.0) < 6.0
         and not low_composite
     )
     if in_grey_zone:
         grey_reason = (
-            f"• Gri Bölge (Kararsız Piyasa): Kompozit skor (%{composite*100:.0f}) netlik eşiğinin (%60) altında. "
-            f"R:R {base_rr:.2f} ile mevcut sinyal yeterince asimetrik değil. "
+            f"• Gri Bölge (Kararsız Piyasa): Kompozit skor (%{composite*100:.0f}) netlik eşiğinin (%57) altında. "
             "Net kırılım bekleniyor — işlem yapılmadı."
         )
         reason_parts = [grey_reason]
@@ -275,7 +274,35 @@ async def run_the_oracle(state: OracleState) -> OracleState:
             except Exception:
                 pass
 
-    # ── 🛡️ GEOMETRİK EXIT & TEPE KOKLAMA KONTROLÜ (MSTR Target Devrimi) ──
+    # ── TF Alignment kalite kontrolü ─────────────────────────────────────────
+    min_tf = int(getattr(conf_map.get("signal_quality", {}), "min_tf_alignment_for_signal", 3) or 3)
+    # signal_quality config bloğu dict olarak gelir
+    _sq = conf_map.get("signal_quality") or {}
+    if isinstance(_sq, dict):
+        min_tf = int(_sq.get("min_tf_alignment_for_signal", 3))
+    aligned_count = sum(
+        1 for b in (_tf_biases or {}).values()
+        if str(b).upper() in {"BULLISH", "BEARISH", "OVERSOLD", "OVERBOUGHT", "ACCUMULATING", "DISTRIBUTING"}
+    )
+    # HTF conflict: haftalık ve günlük zıt yönde → bounce label zorla
+    htf_conflict = (
+        (_w_bias in _BULL_SET and _d_bias in _BEAR_SET) or
+        (_w_bias in _BEAR_SET and _d_bias in _BULL_SET)
+    )
+    if htf_conflict and state.trade_type not in {"SHORT_TERM_BOUNCE_ONLY"}:
+        state = state.model_copy(update={"trade_type": "SHORT_TERM_BOUNCE_ONLY"})
+        agent_print("THE_ORACLE", "HTF çatışması: haftalık↔günlük ters yön → SHORT_TERM_BOUNCE_ONLY zorlandı.", YELLOW)
+
+    # Sinyal kalite yıldız skoru (1-5): ajan uyum + R:R + tarihsel + divergence
+    _star_score = 0
+    if aligned_count >= 4: _star_score += 2
+    elif aligned_count >= 3: _star_score += 1
+    if (base_rr or 0.0) >= 5.0: _star_score += 1
+    if _hist >= 70.0: _star_score += 1
+    if _div_d in ["POSITIVE_DIVERGENCE", "NEGATIVE_DIVERGENCE"]: _star_score += 1
+    signal_quality_stars = max(1, min(5, _star_score))
+
+    # ── 🛡️ GEOMETRİK EXIT & TEPE KOKLAMA KONTROLÜ ──────────────────────────
     # Eğer fiyat yukarıdan gelen düşen dirence çarpmak üzereyse kâr almayı zorunlu kıl!
     note = "Piyasa süzgeçleri kararlı. Pozisyon disiplinli risk yönetimiyle anlamlı."
     if direction == SignalDirection.LONG and dynamic_target is not None and state.entry_price is not None:
@@ -318,5 +345,6 @@ async def run_the_oracle(state: OracleState) -> OracleState:
             "t3": t3_val if t3_val is not None else state.t3,
             "base_rr": base_rr_val if base_rr_val is not None else state.base_rr,
             "risk_reward_ratio": base_rr_val if base_rr_val is not None else state.base_rr,
+            "signal_quality_stars": signal_quality_stars,
         }
     )

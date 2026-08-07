@@ -50,6 +50,18 @@ class CeoConfig(BaseModel):
     confidence_threshold: float = Field(ge=0.0, le=1.0)
     confidence_boost: float = Field(ge=0.0, le=1.0)
     max_retries: int = Field(ge=1, le=10)
+    min_aligned_timeframes: int = Field(default=3, ge=1, le=4)
+
+
+class BistConfig(BaseModel):
+    tcmb_rate: float = Field(default=46.0)
+    usdtry_bearish_threshold_pct: float = Field(default=2.0)
+
+
+class SignalQualityConfig(BaseModel):
+    htf_conflict_forces_bounce_label: bool = True
+    formation_notify_threshold: int = Field(default=60, ge=0)
+    min_tf_alignment_for_signal: int = Field(default=3, ge=1, le=4)
 
 
 class RedTeamConfig(BaseModel):
@@ -127,6 +139,7 @@ class OracleConfig(BaseModel):
     analysis: AnalysisConfig
     risk: RiskConfig
     ceo: CeoConfig
+    bist: BistConfig = Field(default_factory=BistConfig)
     red_team: RedTeamConfig
     quant: QuantConfig
     whale: WhaleConfig
@@ -134,6 +147,7 @@ class OracleConfig(BaseModel):
     asset_universe: dict[str, list[str]] = Field(default_factory=dict)
     scan_schedule: ScanScheduleConfig = Field(default_factory=ScanScheduleConfig)
     higher_timeframe_filter: HTFFilterConfig = Field(default_factory=HTFFilterConfig)
+    signal_quality: SignalQualityConfig = Field(default_factory=SignalQualityConfig)
 
 
 class OracleConfigLoader:

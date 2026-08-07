@@ -15,6 +15,7 @@ import pandas_ta as ta
 import yfinance as yf
 from loguru import logger
 
+from core.asset_classifier import classify_asset
 from core.config import load_oracle_config
 from core.console import BLUE, GREEN, agent_print, error_print
 from core.indicators import normalized_from_score
@@ -23,8 +24,8 @@ from tools.market_data import fetch_crypto_ohlcv
 
 
 def _is_crypto(symbol: str) -> bool:
-    """Kripto varlık mı? (CCXT formatı: BTC/USDT gibi / içerir)"""
-    return "/" in symbol and any(symbol.endswith(f"/{q}") for q in ["USDT", "BTC", "ETH", "BUSD"])
+    """Shared asset classifier ile kripto varlık tespiti."""
+    return classify_asset(symbol) == "crypto"
 
 
 def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -151,7 +152,53 @@ def _calculate_atr(df: pd.DataFrame, period: int) -> pd.Series:
     return atr_series.dropna()
 
 
-def _classify_bias(price: float, ema50: float, sma200: float, rsi: float) -> str:
+def _detect_market_structure(df: pd.DataFrame, lookback: int = 20) -> str:
+    """Algoritmik Piyasa Yapısı Tespiti: HH/HL (bullish) vs LH/LL (bearish).
+
+    Son N mum içinde swing high ve swing low noktalarını bularak:
+    - HH (Higher High) + HL (Higher Low)  → BULLISH_STRUCTURE
+    - LH (Lower High) + LL (Lower Low)   → BEARISH_STRUCTURE
+    - Karışık                             → RANGING
+    """
+    if df is None or len(df) < lookback + 2:
+        return "RANGING"
+
+    closes = df["close"].tail(lookback).values
+    highs  = df["high"].tail(lookback).values
+    lows   = df["low"].tail(lookback).values
+
+    # Pivot high/low tespiti: yerel zirve ve dip bul
+    pivot_highs, pivot_lows = [], []
+    for i in range(1, len(closes) - 1):
+        if highs[i] > highs[i - 1] and highs[i] > highs[i + 1]:
+            pivot_highs.append(highs[i])
+        if lows[i] < lows[i - 1] and lows[i] < lows[i + 1]:
+            pivot_lows.append(lows[i])
+
+    if len(pivot_highs) < 2 or len(pivot_lows) < 2:
+        return "RANGING"
+
+    hh = pivot_highs[-1] > pivot_highs[-2]   # Higher High
+    hl = pivot_lows[-1]  > pivot_lows[-2]    # Higher Low
+    lh = pivot_highs[-1] < pivot_highs[-2]   # Lower High
+    ll = pivot_lows[-1]  < pivot_lows[-2]    # Lower Low
+
+    if hh and hl:
+        return "BULLISH_STRUCTURE"
+    if lh and ll:
+        return "BEARISH_STRUCTURE"
+    return "RANGING"
+
+
+def _classify_bias(price: float, ema50: float, sma200: float, rsi: float,
+                   market_structure: str = "RANGING") -> str:
+    """Bias tespiti: Piyasa yapısı + EMA/SMA + RSI kombine karar."""
+    # Piyasa yapısı önce değerlendirilir — RSI'dan üstündür
+    if market_structure == "BULLISH_STRUCTURE" and price > ema50:
+        return "BULLISH"
+    if market_structure == "BEARISH_STRUCTURE" and price < ema50:
+        return "BEARISH"
+    # Klasik EMA/SMA filtresi
     if price > ema50 > sma200 and 50 <= rsi <= 70:
         return "BULLISH"
     if price < ema50 < sma200 and 30 <= rsi <= 50:
@@ -260,6 +307,7 @@ def _compute_tf_indicators(df: pd.DataFrame) -> dict[str, Any]:
         "sma200": round(sma200_v, 6),
         "vwap": round(vwap_val, 6),
         "vwap_above": vwap_above,
+        "market_structure": market_structure,
         "ma_fallback_used": fallback_sma200,
         "obv_trend": obv_trend,
         "bias": bias,
@@ -793,6 +841,90 @@ def _calculate_confidence(state: dict[str, Any]) -> float:
     return round(float(np.clip(confidence, 0.0, 1.0)), 3)
 
 
+def _compute_signal_formation(
+    tf_metrics: dict[str, dict],
+    biases: dict[str, str],
+    alignment_score: float,
+    aligned_count: int,
+    divergence_daily: str,
+    divergence_weekly: str,
+    entry: float,
+) -> tuple[float, str, str]:
+    """
+    Pre-signal formation skoru (0-100) ve açıklama üretir.
+    Sistem henüz sinyal üretmiyorsa ne kadar yakın olduğunu gösterir.
+    """
+    score = 0.0
+    notes: list[str] = []
+
+    # 1. Timeframe alignment progress (%40 ağırlık)
+    alignment_contrib = alignment_score * 40.0
+    score += alignment_contrib
+    notes.append(f"{aligned_count}/4 TF uyumlu")
+
+    # 2. RSI mesafesi: oversold (≤35) veya overbought (≥65) bölgesine yakınlık (%30 ağırlık)
+    daily_m = tf_metrics.get("1d", {})
+    rsi_daily = float(daily_m.get("rsi", 50.0) or 50.0)
+    if rsi_daily <= 30:
+        rsi_contrib = 30.0
+        notes.append(f"RSI günlük oversold ({rsi_daily:.1f})")
+    elif rsi_daily <= 40:
+        rsi_contrib = 20.0
+        notes.append(f"RSI günlük yaklaşıyor ({rsi_daily:.1f})")
+    elif rsi_daily >= 70:
+        rsi_contrib = 30.0
+        notes.append(f"RSI günlük overbought ({rsi_daily:.1f})")
+    elif rsi_daily >= 60:
+        rsi_contrib = 20.0
+        notes.append(f"RSI günlük yüksek bölge ({rsi_daily:.1f})")
+    else:
+        dist_down = rsi_daily - 30.0
+        dist_up = 70.0 - rsi_daily
+        closest = min(dist_down, dist_up)
+        rsi_contrib = max(0.0, (20.0 - closest) / 20.0 * 15.0)
+    score += rsi_contrib
+
+    # 3. RSI divergence teyidi (%15 ağırlık)
+    if "POSITIVE" in divergence_daily or "NEGATIVE" in divergence_daily:
+        score += 15.0
+        notes.append(f"RSI uyumsuzluk: {divergence_daily}")
+    elif "POSITIVE" in divergence_weekly or "NEGATIVE" in divergence_weekly:
+        score += 10.0
+        notes.append(f"RSI haftalık uyumsuzluk: {divergence_weekly}")
+
+    # 4. Fiyatın key MA'ya yakınlığı (%15 ağırlık)
+    ema50 = float(daily_m.get("ema50", entry) or entry)
+    sma200 = float(daily_m.get("sma200", entry) or entry)
+    if ema50 > 0:
+        dist_ema50_pct = abs(entry - ema50) / ema50 * 100.0
+        if dist_ema50_pct <= 2.0:
+            score += 15.0
+            notes.append(f"Fiyat 50 EMA yakınında (%{dist_ema50_pct:.1f})")
+        elif dist_ema50_pct <= 5.0:
+            score += 8.0
+            notes.append(f"Fiyat 50 EMA'ya yaklaşıyor (%{dist_ema50_pct:.1f})")
+    if sma200 > 0:
+        dist_sma200_pct = abs(entry - sma200) / sma200 * 100.0
+        if dist_sma200_pct <= 3.0:
+            score = min(100.0, score + 5.0)
+            notes.append(f"Fiyat 200 SMA yakınında (%{dist_sma200_pct:.1f})")
+
+    score = round(min(100.0, max(0.0, score)), 1)
+
+    # ETA tahmini
+    if score >= 80:
+        eta = "Sinyal bölgesinde — yakın izleme gerekli"
+    elif score >= 60:
+        eta = "2-5 gün içinde potansiyel sinyal"
+    elif score >= 40:
+        eta = "1-2 hafta içinde sinyal olasılığı"
+    else:
+        eta = "Sinyal henüz uzak"
+
+    reason = " | ".join(notes) if notes else "Yeterli yakınsama yok"
+    return score, reason, eta
+
+
 async def run_quant_engine(state: OracleState) -> OracleState:
     agent_print(
         "QUANT_ENGINE",
@@ -966,6 +1098,17 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                     f"USDT.D yüksek ({usdt_d:.2f}) -> LONG sinyalinde likidite baskısı riski."
                 )
 
+        # ── Pre-Signal Formation: sinyal oluşum skoru ve ETA tahmini ──
+        formation_score, formation_reason, formation_eta = _compute_signal_formation(
+            tf_metrics=tf_metrics,
+            biases=biases,
+            alignment_score=alignment_score,
+            aligned_count=aligned_count,
+            divergence_daily=divergence_daily,
+            divergence_weekly=divergence_weekly,
+            entry=entry,
+        )
+
         agent_print("QUANT_ENGINE", f"Bias 1w/1d/4h/1h={weekly_bias}/{daily_bias}/{h4_bias}/{h1_bias}", BLUE)
         agent_print("QUANT_ENGINE", f"Alignment={alignment_score:.2f} ({aligned_count}/4) | TradeType={trade_type}", GREEN)
         agent_print("QUANT_ENGINE", f"Divergence D/W={divergence_daily}/{divergence_weekly}", BLUE)
@@ -1009,6 +1152,9 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "historical_pattern": historical_pattern + (" | Yakın S/R var" if near_hist_level else ""),
                 "pattern_outcome_bias": pattern_outcome_bias,
                 "ma_fallback_used": ma_fallback_used,
+                "signal_formation_score": formation_score,
+                "signal_formation_reason": formation_reason,
+                "signal_eta_estimate": formation_eta,
                 "messages": [
                     f"[QUANT_ENGINE] tf_bias={biases} align={alignment_score:.2f} trade={trade_type} "
                     f"base_rr={long_levels['base_rr']} hist_score={historical_similarity_score:.1f} "

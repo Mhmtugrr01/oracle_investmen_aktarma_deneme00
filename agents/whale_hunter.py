@@ -327,11 +327,31 @@ async def _fetch_binance_futures_data(symbol: str) -> dict:
 
 
 async def run_whale_hunter(state: OracleState) -> OracleState:
+    from core.asset_classifier import is_crypto as _is_crypto_asset
     agent_print(
         "SYMBIOTIC_HUNTER",
         f"Devrede → {state.symbol} | Balina radarı aktif…",
         MAGENTA,
     )
+
+    # Whale Hunter yalnızca kripto varlıklar için anlamlı veri üretir.
+    # Hisse senedi / altın / BIST için whale_score=None bırakılır;
+    # composite_score bunu tespit ederek ağırlığı diğer ajanlara redistribüt eder.
+    if not _is_crypto_asset(state.symbol):
+        agent_print(
+            "SYMBIOTIC_HUNTER",
+            f"{state.symbol} kripto değil — whale analizi atlanıyor (N/A).",
+            MAGENTA,
+        )
+        return state.model_copy(
+            update={
+                "current_node": AgentNode.WHALE_HUNTER,
+                "status": PipelineStatus.RUNNING,
+                "whale_score": None,  # None: redistribüsyon sinyali
+                "messages": [f"[WHALE_HUNTER] SKIPPED (non-crypto: {state.symbol})"],
+            }
+        )
+
     try:
         conf = await load_oracle_config()
         whale_conf = conf.whale

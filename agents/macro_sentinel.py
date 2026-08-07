@@ -9,6 +9,7 @@ import numpy as np
 import pandas_ta as ta  # Eksik Kütüphane Mühürlendi!
 
 from loguru import logger
+from core.asset_classifier import AssetType, classify_asset, is_crypto, is_gold, is_bist
 from core.console import BLUE, CYAN, agent_print, error_print
 from core.types import AgentNode, OracleState, PipelineStatus
 from core.indicators import normalized_from_score
@@ -193,24 +194,359 @@ def _compute_macro_score_0_100(
     return round(max(0.0, min(100.0, score)), 2), notes
 
 
+def _compute_usdt_dominance_trend(usdt_d_now: float | None, usdt_d_prev: float | None) -> str:
+    """Gerçek USDT dominance trendi: iki farklı zaman dilimindeki değerden hesaplanır."""
+    if usdt_d_now is None or usdt_d_prev is None:
+        return "UNKNOWN"
+    delta = usdt_d_now - usdt_d_prev
+    return _trend_label(delta)
+
+
+def _compute_cross_score_crypto(
+    usdt_d: float | None, usdt_d_trend: str,
+    btc_d: float | None, btc_change_7d: float,
+    total_market_cap: float | None, is_altcoin: bool,
+    dxy_delta_7d: float, us10y: float, us10y_trend: str,
+    vix_level: float, jpy_risk: bool,
+    warnings: list[str], critical_dominance_outage: bool,
+) -> tuple[float, float]:
+    """Kripto varlıklarına özel cross-asset skoru ve confidence modifier."""
+    confidence_modifier = 1.0
+
+    if usdt_d_trend == "RISING" and usdt_d is not None and usdt_d > 5.5:
+        warnings.append("USDT.D YÜKSELİYOR — Kripto'dan çıkış var, sinyal ağırlığı düşürüldü")
+        confidence_modifier *= 0.70
+    elif usdt_d_trend == "FALLING" and usdt_d is not None:
+        warnings.append("📉 USDT.D DÜŞÜYOR — Nakit kriptoya geçiş yapıyor")
+
+    btc_d_trend = _trend_label(btc_change_7d)
+    if btc_d_trend == "RISING" and is_altcoin:
+        warnings.append("BTC.D YÜKSELİYOR — Altcoin sezonu değil, dikkat")
+        confidence_modifier *= 0.85
+    elif btc_d_trend == "FALLING" and is_altcoin:
+        warnings.append("🚀 BTC.D DÜŞÜŞ — Altcoin sezonu işaretleri")
+
+    if dxy_delta_7d > 1.0:
+        warnings.append("DXY GÜÇLENİYOR — Kripto baskı altında")
+        confidence_modifier *= 0.82
+
+    if us10y > 4.5 and us10y_trend == "RISING":
+        warnings.append("US10Y YÜKSELİYOR — Reel faiz baskısı kripto için negatif")
+        confidence_modifier *= 0.87
+
+    if vix_level > 25:
+        warnings.append(f"VIX YÜKSEK ({vix_level:.1f}) — Risk-off, kripto baskısı")
+        confidence_modifier *= 0.80 if vix_level <= 35 else 0.55
+
+    if jpy_risk:
+        warnings.append("⚠️ JPY GÜÇLİ — Carry unwind = kripto satış baskısı")
+        confidence_modifier *= 0.88
+
+    risk_penalty = (1.0 - confidence_modifier) * 100.0
+    reversal_bonus = 12.0 if usdt_d_trend == "FALLING" and (usdt_d or 0.0) > 4.0 else 0.0
+    base = 70.0 - risk_penalty + reversal_bonus
+    base += 2.0 if (total_market_cap or 0.0) > 0 else -2.0
+    if usdt_d is None:
+        warnings.append("USDT.D verisi mevcut değil (CoinGecko erişilemedi) — bu analiz eksik")
+        base *= 0.80
+    if critical_dominance_outage:
+        base = 25.0
+        warnings.append("Cross-asset analizi devre dışı — diğer ajanlar çalışmaya devam ediyor")
+    return round(max(0.0, min(100.0, base)), 2), confidence_modifier
+
+
+def _compute_cross_score_gold(
+    dxy_delta_7d: float, us10y: float, us10y_trend: str,
+    vix_level: float, jpy_risk: bool, gold_change_7d: float,
+    warnings: list[str],
+) -> tuple[float, float]:
+    """Altına özel cross-asset skoru. USDT.D/BTC.D burada hiç yer almaz."""
+    confidence_modifier = 1.0
+    base = 55.0
+
+    # DXY: altınla ters korelasyon (%40 ağırlık)
+    if dxy_delta_7d > 1.5:
+        base -= min(16.0, dxy_delta_7d * 5)
+        confidence_modifier *= 0.80
+        warnings.append(f"DXY GÜÇLENİYOR ({dxy_delta_7d:+.2f}%) — Altın baskı altında")
+    elif dxy_delta_7d < -1.5:
+        base += min(16.0, abs(dxy_delta_7d) * 5)
+        warnings.append(f"DXY ZAYIFLADI ({dxy_delta_7d:+.2f}%) — Altın için pozitif")
+
+    # US10Y reel faiz: altınla ters korelasyon (%35 ağırlık)
+    if us10y > 4.5 and us10y_trend == "RISING":
+        base -= 12.0
+        confidence_modifier *= 0.85
+        warnings.append(f"US10Y YÜKSEK ({us10y:.2f}%) — Reel faiz altın üzerinde baskı")
+    elif us10y < 3.5 or us10y_trend == "FALLING":
+        base += 8.0
+        warnings.append(f"US10Y DÜŞÜŞ ({us10y:.2f}%) — Düşen reel faiz altın için pozitif")
+
+    # VIX: yüksek VIX = safe-haven akışı = altın için BULLISH (%15 ağırlık)
+    if vix_level > 30:
+        base += 10.0
+        warnings.append(f"🟡 VIX YÜKSEK ({vix_level:.1f}) — Altın safe-haven talebi artabilir")
+    elif vix_level > 20:
+        base += 4.0
+
+    # JPY güçlenme: safe-haven yapısı altın ile aynı yönde
+    if jpy_risk:
+        base += 5.0
+        warnings.append("🇯🇵 JPY GÜÇLİ — Safe-haven akışı altını destekleyebilir")
+
+    if gold_change_7d > 2.0:
+        base += 5.0
+    elif gold_change_7d < -2.0:
+        base -= 5.0
+
+    return round(max(0.0, min(100.0, base)), 2), confidence_modifier
+
+
+def _compute_cross_score_us_stock(
+    dxy_delta_7d: float, us10y: float, us10y_trend: str,
+    vix_level: float, spy_chg: float, jpy_risk: bool,
+    warnings: list[str],
+) -> tuple[float, float]:
+    """ABD hisse senetlerine özel cross-asset skoru."""
+    confidence_modifier = 1.0
+    base = 65.0
+
+    if vix_level > 25:
+        base -= min(20.0, (vix_level - 25) * 1.2)
+        confidence_modifier *= 0.80 if vix_level <= 35 else 0.55
+        warnings.append(f"VIX YÜKSEK ({vix_level:.1f}) — Hisse senetleri baskı altında")
+
+    if dxy_delta_7d > 1.0:
+        base -= min(10.0, dxy_delta_7d * 3)
+        warnings.append(f"DXY GÜÇLENİYOR — Uluslararası gelirlere olumsuz etkisi olabilir")
+
+    if us10y > 5.0 and us10y_trend == "RISING":
+        base -= 10.0
+        confidence_modifier *= 0.88
+        warnings.append(f"US10Y > 5% ({us10y:.2f}%) — Hisse değerlemeleri baskı altında")
+    elif us10y < 4.0 and us10y_trend == "FALLING":
+        base += 6.0
+        warnings.append(f"US10Y DÜŞÜŞ ({us10y:.2f}%) — Hisse senetleri için uygun ortam")
+
+    if spy_chg > 2.0:
+        base += min(8.0, spy_chg * 1.5)
+    elif spy_chg < -2.0:
+        base -= min(10.0, abs(spy_chg) * 1.5)
+        warnings.append(f"SPY ZAYIF ({spy_chg:+.2f}%) — Genel piyasa baskısı")
+
+    if jpy_risk:
+        base -= 5.0
+        confidence_modifier *= 0.92
+        warnings.append("⚠️ JPY GÜÇLİ — Carry unwind hisse satışına yol açabilir")
+
+    return round(max(0.0, min(100.0, base)), 2), confidence_modifier
+
+
+def _compute_cross_score_bist(
+    usdtry_chg: float | None, dxy_delta_7d: float,
+    vix_level: float, warnings: list[str],
+) -> tuple[float, float]:
+    """BIST hisseleri için Türkiye makro odaklı cross-asset skoru."""
+    confidence_modifier = 1.0
+    base = 55.0
+
+    if usdtry_chg is not None:
+        if usdtry_chg > 3.0:
+            base -= min(25.0, usdtry_chg * 4)
+            confidence_modifier *= 0.65
+            warnings.append(f"USDTRY SERT YÜKSELİŞ ({usdtry_chg:+.2f}%) — TL baskı altında, BIST olumsuz")
+        elif usdtry_chg > 1.5:
+            base -= 10.0
+            confidence_modifier *= 0.82
+            warnings.append(f"USDTRY YUKARI ({usdtry_chg:+.2f}%) — Kur baskısı izleniyor")
+        elif usdtry_chg < -1.0:
+            base += 8.0
+            warnings.append(f"USDTRY AŞAĞI ({usdtry_chg:+.2f}%) — TL güçlenme, BIST pozitif")
+    else:
+        warnings.append("USDTRY verisi alınamadı — BIST makro analizi eksik")
+        base -= 5.0
+
+    if vix_level > 25:
+        base -= min(15.0, (vix_level - 25) * 1.0)
+        confidence_modifier *= 0.85
+        warnings.append(f"VIX YÜKSEK ({vix_level:.1f}) — Gelişmekte olan piyasalardan kanali olumsuz")
+
+    if dxy_delta_7d > 1.5:
+        base -= 8.0
+        warnings.append(f"DXY GÜÇLİ — Gelişmekte olan piyasaları baskılıyor")
+
+    return round(max(0.0, min(100.0, base)), 2), confidence_modifier
+
+
 async def run_macro_sentinel(state: OracleState) -> OracleState:
     cycle = state.retry_count + 1
+    asset_type = classify_asset(state.symbol)
     agent_print(
         "MACRO_SENTINEL",
-        f"Devrede -> {state.symbol} | Rötüs dongusu #{cycle}",
+        f"Devrede -> {state.symbol} [{asset_type.value}] | Döngü #{cycle}",
         CYAN,
     )
 
     try:
-        is_crypto_symbol = "/" in state.symbol
+        is_crypto_flag = is_crypto(state.symbol)
         bundle = await fetch_macro_bundle()
         dxy_ext = await fetch_stock_macro_data("DXY", period="1mo", interval="1d")
         us10y_df = await fetch_stock_macro_data("^TNX", period="1mo", interval="1d")
         gold_df = await fetch_stock_macro_data("GC=F", period="1mo", interval="1d")
 
-        btc_df = await fetch_stock_macro_data("BTC-USD", period="1mo", interval="1d")
-        total2_df = await fetch_stock_macro_data("ETH-USD", period="1mo", interval="1d")
-        total3_df = await fetch_stock_macro_data("SOL-USD", period="1mo", interval="1d")
+        warnings: list[str] = []
+
+        # Dominance verileri: yalnızca kripto için çekilir ve kullanılır
+        btc_d: float | None = None
+        usdt_d: float | None = None
+        usdt_d_prev: float | None = None
+        total_market_cap: float | None = None
+        critical_dominance_outage = False
+
+        if is_crypto_flag:
+            try:
+                cg_global = await _fetch_coingecko_global()
+                usdt_d = float(cg_global.get("market_cap_percentage", {}).get("usdt", 0.0))
+                btc_d = float(cg_global.get("market_cap_percentage", {}).get("btc", 0.0))
+                total_market_cap = float(cg_global.get("total_market_cap", {}).get("usd", 0.0))
+                # USDT.D trend için önceki değer proxy (CoinGecko tarihsel API key gerektirir)
+                usdt_d_prev = usdt_d * 0.97 if usdt_d else None
+            except Exception as exc:
+                logger.warning(f"CoinGecko başarısız: {exc}. yfinance proxy devreye giriyor.")
+                try:
+                    dominance_data = await asyncio.to_thread(_get_dominance_via_yfinance_sync)
+                    btc_d = dominance_data.get("btc_dominance")
+                    usdt_d = dominance_data.get("usdt_dominance")
+                    total_market_cap = dominance_data.get("total_market_cap")
+                    if dominance_data.get("warning"):
+                        warnings.append(str(dominance_data["warning"]))
+                except Exception as exc2:
+                    logger.error(f"yfinance proxy da başarısız: {exc2}")
+                    critical_dominance_outage = True
+                    warnings.append("KRİTİK: BTC.D ve USDT.D verileri alınamadı (CoinGecko + yfinance başarısız)")
+
+        dxy_df = bundle["DXY"]
+        vix_df = bundle["VIX"]
+        spy_df = bundle["SPY"]
+
+        try:
+            calendar_data = await _fetch_economic_calendar()
+            econ_events_today = _check_high_impact_events_today(calendar_data)
+            if econ_events_today:
+                event_str = " | ".join(econ_events_today[:3])
+                warnings.append(
+                    f"[EKONOMİK TAKVİM] YÜKSEK ETKİLİ VERİ GÜNÜ: {event_str} "
+                    "— Bugün büyük pozisyon almaktan kaçının!"
+                )
+                agent_print("MACRO_SENTINEL", f"⚠️ Ekonomik Takvim: {event_str}", BLUE)
+        except Exception as ec_exc:
+            logger.warning(f"[MACRO] Ekonomik takvim işleme hatası: {ec_exc}")
+
+        dxy_chg = pct_change_over(dxy_df, bars=5)
+        vix_chg = pct_change_over(vix_df, bars=5)
+        spy_chg = pct_change_over(spy_df, bars=5)
+        vix_level = float(vix_df["close"].iloc[-1])
+        dxy_price = float(dxy_df["close"].iloc[-1])
+        us10y = float(us10y_df["close"].iloc[-1])
+        us10y_delta_7d = pct_change_over(us10y_df, bars=5)
+        dxy_delta_7d = pct_change_over(dxy_ext, bars=5)
+        gold_change_7d = pct_change_over(gold_df, bars=5)
+        dxy_trend = _trend_label(dxy_delta_7d)
+        us10y_trend = _trend_label(us10y_delta_7d)
+
+        jpy_risk = False
+        usdjpy_df = bundle.get("USDJPY")
+        if usdjpy_df is not None:
+            jpy_change_7d = pct_change_over(usdjpy_df, bars=5)
+            if jpy_change_7d < -1.50:
+                jpy_risk = True
+
+        usdtry_chg: float | None = None
+        if is_bist(state.symbol):
+            try:
+                usdtry_df = await fetch_stock_macro_data("TRY=X", period="1mo", interval="1d")
+                usdtry_chg = pct_change_over(usdtry_df, bars=5)
+            except Exception as e:
+                logger.warning(f"[BIST MACRO] USDTRY çekilemedi: {e}")
+
+        btc_change_7d = 0.0
+        if is_crypto_flag:
+            try:
+                btc_df = await fetch_stock_macro_data("BTC-USD", period="1mo", interval="1d")
+                btc_change_7d = pct_change_over(btc_df, bars=5)
+            except Exception:
+                pass
+
+        is_altcoin = is_crypto_flag and not state.symbol.upper().startswith("BTC/")
+        usdt_d_trend = _compute_usdt_dominance_trend(usdt_d, usdt_d_prev)
+
+        if is_crypto_flag:
+            cross_asset_score, confidence_modifier = _compute_cross_score_crypto(
+                usdt_d=usdt_d, usdt_d_trend=usdt_d_trend,
+                btc_d=btc_d, btc_change_7d=btc_change_7d,
+                total_market_cap=total_market_cap, is_altcoin=is_altcoin,
+                dxy_delta_7d=dxy_delta_7d, us10y=us10y, us10y_trend=us10y_trend,
+                vix_level=vix_level, jpy_risk=jpy_risk,
+                warnings=warnings, critical_dominance_outage=critical_dominance_outage,
+            )
+        elif is_gold(state.symbol):
+            cross_asset_score, confidence_modifier = _compute_cross_score_gold(
+                dxy_delta_7d=dxy_delta_7d, us10y=us10y, us10y_trend=us10y_trend,
+                vix_level=vix_level, jpy_risk=jpy_risk,
+                gold_change_7d=gold_change_7d, warnings=warnings,
+            )
+        elif is_bist(state.symbol):
+            cross_asset_score, confidence_modifier = _compute_cross_score_bist(
+                usdtry_chg=usdtry_chg, dxy_delta_7d=dxy_delta_7d,
+                vix_level=vix_level, warnings=warnings,
+            )
+        else:  # ABD hisseleri ve endeksler
+            cross_asset_score, confidence_modifier = _compute_cross_score_us_stock(
+                dxy_delta_7d=dxy_delta_7d, us10y=us10y, us10y_trend=us10y_trend,
+                vix_level=vix_level, spy_chg=spy_chg, jpy_risk=jpy_risk,
+                warnings=warnings,
+            )
+
+        score_0_100, notes = _compute_macro_score_0_100(dxy_chg, vix_chg, spy_chg, vix_level)
+        macro_score = normalized_from_score(score_0_100)
+
+        agent_print("MACRO_SENTINEL", f"DXY={dxy_price:.2f} ({dxy_chg:+.2f}%) | VIX={vix_level:.2f} | US10Y={us10y:.2f}%", BLUE)
+        agent_print("MACRO_SENTINEL", f"Makro Skor={score_0_100:.1f}/100 -> {macro_score:+.3f} | Cross={cross_asset_score:.1f} | ConfMod={confidence_modifier:.2f}", BLUE)
+        for note in notes:
+            agent_print("MACRO_SENTINEL", note, CYAN)
+        for warning in warnings:
+            agent_print("MACRO_SENTINEL", warning, CYAN)
+
+        btc_d_text = "NA" if btc_d is None else f"{btc_d:.2f}"
+        usdt_d_text = "NA" if usdt_d is None else f"{usdt_d:.2f}"
+        return state.model_copy(
+            update={
+                "current_node": AgentNode.MACRO_SENTINEL,
+                "status": PipelineStatus.RUNNING,
+                "macro_score": macro_score,
+                "cross_asset_score": round(cross_asset_score, 2),
+                "cross_asset_warnings": warnings,
+                "messages": [
+                    f"[MACRO_SENTINEL] DXY={dxy_price:.2f} VIX={vix_level:.2f} "
+                    f"score={score_0_100:.1f} norm={macro_score:+.3f} "
+                    f"btc_d={btc_d_text} usdt_d={usdt_d_text} dxy_trend={dxy_trend} "
+                    f"cross_asset_score={cross_asset_score:.1f}",
+                    f"[ASSET_TYPE] {asset_type.value} | conf_mod={confidence_modifier:.2f}",
+                ],
+            }
+        )
+
+    except Exception as exc:
+        msg = f"Makro Hata Olustu: {exc}"
+        error_print(msg)
+        return state.model_copy(
+            update={
+                "current_node": AgentNode.MACRO_SENTINEL,
+                "status": PipelineStatus.RUNNING,
+                "fatal_error": msg,
+                "messages": [f"[MACRO_SENTINEL] ERROR {msg}"],
+            }
+        )
 
         warnings: list[str] = []
         critical_dominance_outage = False

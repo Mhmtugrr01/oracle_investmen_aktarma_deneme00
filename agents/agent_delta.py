@@ -12,11 +12,21 @@ from loguru import logger
 from core.console import CYAN, GREEN, RED, agent_print, error_print
 from core.types import OracleState, PipelineStatus
 
-# 👁️ İZLENEN SEÇKİN 10 KÜRESEL ANALİST LİSTESİ
-ELITE_ANALYSTS = [
+# 👁️ İZLENEN ANALİST LİSTESİ — asset sınıfına göre ayrılmış
+CRYPTO_ANALYSTS = [
     "Pentoshi", "Ansem", "GCRClassic", "CredibleCrypto", "CryptoBullet",
     "DonAlt", "Benjamin Cowen", "Michael van de Poppe", "Bluntz_Capital", "IncomeSharks"
 ]
+
+# Makro / Altın / Genel piyasa analistleri
+MACRO_GOLD_ANALYSTS = [
+    "Lyn Alden", "Luke Gromen", "Peter Brandt", "Jeff Snider", "Lawrence Lepard",
+    "Michael Howell", "Simon White", "Jim Bianco", "Jim Rogers", "Stanley Druckenmiller"
+]
+
+# Tüm analistler (genel sorgular için)
+ALL_ANALYSTS = CRYPTO_ANALYSTS + MACRO_GOLD_ANALYSTS
+
 
 class DeltaReport(BaseModel):
     summary: str = Field(description="Analistlerin tezlerinin kisa ozeti (Markdown formatinda)")
@@ -24,14 +34,26 @@ class DeltaReport(BaseModel):
     candidates: list[str] = Field(description="Analiz edilmeye deger bulunan hisse veya kripto sembolleri (Orn: ['FET', 'MSTR'])")
 
 
-async def _gather_social_intel() -> str:
+def _build_analyst_query(asset_type: str = "crypto") -> str:
+    """Asset tipine göre doğru analist listesiyle Tavily query oluşturur."""
+    if asset_type in ("commodity_gold", "us_stock", "index"):
+        analysts = MACRO_GOLD_ANALYSTS
+        topic = "macro gold markets analysis"
+    else:  # crypto default
+        analysts = CRYPTO_ANALYSTS
+        topic = "crypto analysis"
+    analyst_str = " OR ".join(f'"{a}"' for a in analysts[:8])
+    return f"({analyst_str}) {topic} after:24h"
+
+
+async def _gather_social_intel(asset_type: str = "crypto") -> str:
     """Tavily Search API kullanarak son 24 saatteki analist paylaşımlarını canlı tarar."""
     tavily_key = os.getenv("TAVILY_API_KEY")
     if not tavily_key:
         logger.warning("[AGENT_DELTA] TAVILY_API_KEY bulunamadı! Simüle edilmiş veri toplanıyor.")
         return "Pentoshi: FET daily breakout is looking massive on high volume. Michael van de Poppe: MSTR local support holding, ready for bounce."
 
-    query = f"site:twitter.com ({' OR '.join(ELITE_ANALYSTS)}) crypto analysis after:24h"
+    query = _build_analyst_query(asset_type)
     url = "https://api.tavily.com/search"
     payload = {
         "api_key": tavily_key,
@@ -53,7 +75,7 @@ async def _gather_social_intel() -> str:
     return "FET breakout on daily. MSTR support holding."
 
 
-async def run_social_alpha_catcher(telegram_sender=None) -> None:
+async def run_social_alpha_catcher(telegram_sender=None, asset_type: str = "crypto") -> None:
     """
     Her sabah 08:00'de tetiklenir.
     Verileri toplar, Claude'a anti-shill yaptırır ve çıkan varlıkları Olympus Motoruna fırlatır.
@@ -62,7 +84,7 @@ async def run_social_alpha_catcher(telegram_sender=None) -> None:
     agent_print("AGENT_DELTA", "Sabah 08:00 Protokolü Devrede — Küresel 10 Analist taranıyor...", CYAN)
     
     # 1. Veri toplama
-    raw_intel = await _gather_social_intel()
+    raw_intel = await _gather_social_intel(asset_type)
     
     # 2. Claude 3.5 Sonnet / OpenRouter ile Akıl Yürütme ve Karar
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
