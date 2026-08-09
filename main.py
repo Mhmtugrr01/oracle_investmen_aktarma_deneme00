@@ -69,6 +69,78 @@ async def social_alpha_scheduler_loop():
             logger.error(f"[DELTA_SCHEDULER] Sosyal tarama hatası: {e}")
             await asyncio.sleep(3600)
 
+
+async def oracle_scanner_loop():
+    """
+    4 KATMANLI TARAYICI — Gece 04:00-09:00 (İstanbul) penceresinde otomatik tarama.
+    Rejim motoru, prefilter, derin pipeline ve sabah teslimatı scanner içinde yönetilir.
+    Telegram handler'ı ASLA bloke etmez (arka plan görevi).
+    """
+    from core.scanner import OracleScanner
+
+    allowed = os.getenv("ALLOWED_USER_ID", "").strip()
+    default_chat = int(allowed) if allowed.isdigit() else 0
+
+    async def _pipeline_runner(asset: str):
+        # Tercih: mevcut Telegram handler pipeline'ını kullan (yapılandırılmış graph)
+        if handler is not None and hasattr(handler, "_run_pipeline"):
+            try:
+                return await handler._run_pipeline(
+                    symbol=asset,
+                    user_id=allowed,
+                    chat_id=default_chat,
+                    query=f"/tarama {asset}",
+                )
+            except Exception as exc:
+                logger.error(f"[SCANNER_MAIN] Pipeline hatası ({asset}): {exc}")
+                return None
+        # Fallback: bağımsız graph
+        from core.graph import compile_oracle_graph
+        from core.types import OracleState, PipelineStatus, SignalDirection
+
+        graph = compile_oracle_graph()
+        try:
+            raw = await asyncio.wait_for(
+                graph.ainvoke(
+                    OracleState(
+                        query=f"/tarama {asset}",
+                        symbol=asset,
+                        user_id=allowed,
+                        chat_id=default_chat,
+                    )
+                ),
+                timeout=300.0,
+            )
+        except asyncio.TimeoutError:
+            return OracleState(
+                query=f"/tarama {asset}",
+                symbol=asset,
+                user_id=allowed,
+                chat_id=default_chat,
+                status=PipelineStatus.ABORTED,
+                fatal_error=f"{asset} analizi 5 dakika limitini aştı.",
+                signal_direction=SignalDirection.NO_TRADE,
+            )
+        if isinstance(raw, OracleState):
+            return raw
+        return OracleState.model_validate(raw)
+
+    async def _telegram_sender(text: str) -> None:
+        if handler is not None and getattr(handler, "_app", None) is not None and default_chat:
+            try:
+                await handler._app.bot.send_message(
+                    chat_id=default_chat, text=text, disable_web_page_preview=True
+                )
+            except Exception as exc:
+                logger.warning(f"[SCANNER_MAIN] Bildirim gönderilemedi: {exc}")
+
+    from core.config import load_oracle_config
+
+    cfg = await load_oracle_config()
+    scanner = OracleScanner(_pipeline_runner, _telegram_sender, cfg.model_dump())
+    logger.info("[SCANNER_MAIN] 4 katmanlı tarayıcı başlatılıyor (gece 04:00-09:00 penceresi).")
+    await scanner.start()
+
 handler = None
 _BOT_LOCK_FD = None
 _BOT_LOCK_PATH = os.path.join(tempfile.gettempdir(), "the_oracle_bot.lock")
@@ -120,7 +192,9 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(portfolio_tracker_loop())
             # Sabah 08:00 sosyal medya alpha tarama döngüsü
             asyncio.create_task(social_alpha_scheduler_loop())
-            logger.info("[SYSTEM] Telegram bot polling ve Portföy Takip döngüsü başlatıldı.")
+            # ── PROJECT OLYMPUS V2: 4 katmanlı otomatik tarayıcı (gece 04:00-09:00) ──
+            asyncio.create_task(oracle_scanner_loop())
+            logger.info("[SYSTEM] Telegram bot polling, Portföy Takip ve 4 katmanlı tarayıcı başlatıldı.")
     except Exception as exc:
         logger.error(f"[SYSTEM] Bot başlatma hatası: {exc}")
     try:

@@ -124,6 +124,18 @@ class ScanScheduleConfig(BaseModel):
     full_scan_interval_hours: int = Field(default=4, ge=1, le=168)
     watchlist_check_interval_min: int = Field(default=15, ge=1, le=1440)
     daily_briefing_hour: int = Field(default=8, ge=0, le=23)
+    # ── PROJECT OLYMPUS V2: Gece taraması + katmanlı pipeline ──
+    overnight_start_hour: int = Field(default=4, ge=0, le=23)
+    overnight_end_hour: int = Field(default=9, ge=0, le=23)
+    delivery_hour: int = Field(default=9, ge=0, le=23)
+    prefilter_concurrency: int = Field(default=3, ge=1, le=16)
+    deep_scan_max_assets: int = Field(default=6, ge=1, le=21)
+    per_asset_timeout_sec: int = Field(default=300, ge=30, le=1800)
+    scan_wallclock_timeout_min: int = Field(default=240, ge=10, le=1440)
+    heartbeat_interval_min: int = Field(default=10, ge=1, le=120)
+    tf_window: list[str] = Field(
+        default_factory=lambda: ["5m", "15m", "1h", "4h", "1d", "1w"]
+    )
 
 
 class HTFFilterConfig(BaseModel):

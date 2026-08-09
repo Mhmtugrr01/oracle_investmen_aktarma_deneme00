@@ -704,26 +704,49 @@ class TelegramHandler:
         if not update.effective_message:
             return
 
-        await update.effective_message.reply_text("[SCANNER] 21 varlik taraniyor... (~10 dakika)")
+        chat_id = update.effective_chat.id
+        user_id = str(update.effective_user.id) if update.effective_user else ""
+
+        # ── NON-BLOCKING: Handler asla bekletilmez; tarama arka planda görev olarak çalışır ──
+        await update.effective_message.reply_text(
+            "🔍 ORACLE TARAMA BAŞLADI (arka planda)\n"
+            "4 katmanlı pipeline: Rejim → Prefilter → Derin Analiz → Teslimat.\n"
+            "İlerleme heartbeat ile iletilecek, sonuçlar hazır olunca otomatik gelecek."
+        )
         try:
             from core.scanner import OracleScanner
 
             async def _pipeline_runner(asset: str):
                 return await self._run_pipeline(
                     symbol=asset,
-                    user_id=str(update.effective_user.id) if update.effective_user else "",
-                    chat_id=update.effective_chat.id,
+                    user_id=user_id,
+                    chat_id=chat_id,
                     query=f"/tarama {asset}",
                 )
 
             async def _telegram_sender(text: str):
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+                try:
+                    await context.bot.send_message(chat_id=chat_id, text=text)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"[TARAMA] Bildirim gönderilemedi: {exc}")
 
             conf = await load_oracle_config()
             scanner = OracleScanner(_pipeline_runner, _telegram_sender, conf.model_dump())
-            await scanner._run_scan_once(notify_start=False)
+
+            async def _tarama_task() -> None:
+                try:
+                    await scanner._run_scan_once(notify_start=False, trigger="kullanici_taramasi")
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(f"[TARAMA] Arka plan taraması hatası: {exc}")
+                    try:
+                        await _telegram_sender(f"⚠️ Tarama sırasında hata: {exc}")
+                    except Exception:
+                        pass
+
+            asyncio.create_task(_tarama_task())
         except Exception as exc:
-            await update.effective_message.reply_text(f"Tarama hatasi: {exc}")
+            logger.error(f"[TARAMA] Tarama başlatılamadı: {exc}")
+            await update.effective_message.reply_text(f"Tarama başlatma hatası: {exc}")
 
     async def command_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._deny_if_unauthorized(update):

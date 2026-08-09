@@ -15,17 +15,12 @@ import pandas_ta as ta
 import yfinance as yf
 from loguru import logger
 
-from core.asset_classifier import classify_asset
+from core.asset_classifier import classify_asset, is_crypto
 from core.config import load_oracle_config
 from core.console import BLUE, GREEN, agent_print, error_print
 from core.indicators import normalized_from_score
 from core.types import AgentNode, OracleState, PipelineStatus
 from tools.market_data import fetch_crypto_ohlcv
-
-
-def _is_crypto(symbol: str) -> bool:
-    """Shared asset classifier ile kripto varlık tespiti."""
-    return classify_asset(symbol) == "crypto"
 
 
 def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -86,7 +81,7 @@ def _get_atr_multipliers(symbol: str, risk_conf: Any) -> dict[str, Any]:
     min_rr = float(getattr(risk_conf, "min_risk_reward_ratio", 3.0) or 3.0)
     required_t1 = max(tp_mult, stop_mult * min_rr)
 
-    if _is_crypto(symbol):
+    if is_crypto(symbol):
         t1 = max(4.5, required_t1)
         return {
             "stop": stop_mult,
@@ -129,7 +124,7 @@ async def _download_yf(symbol: str, period: str, interval: str) -> pd.DataFrame:
 
 
 async def _fetch_timeframe_data(symbol: str, tf: str, limit: int) -> pd.DataFrame:
-    if _is_crypto(symbol):
+    if is_crypto(symbol):
         return (await fetch_crypto_ohlcv(symbol, timeframe=tf, limit=limit)).ffill().dropna()
 
     if tf == "4h":
@@ -1342,7 +1337,7 @@ async def run_quant_engine(state: OracleState) -> OracleState:
 
         # USDT dominance ters korelasyon teyidi: kripto long kararlarında ek güvenlik uyarısı.
         dominance_warnings: list[str] = []
-        if _is_crypto(state.symbol):
+        if is_crypto(state.symbol):
             _, usdt_d = _extract_macro_dominance(state)
             if usdt_d is not None and usdt_d >= 7.0 and trade_type in {
                 "ACCUMULATE_ZONE",

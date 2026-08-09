@@ -121,6 +121,16 @@ scan_schedule:
   full_scan_interval_hours: 4
   watchlist_check_interval_min: 15
   daily_briefing_hour: 8
+  # ── PROJECT OLYMPUS V2: Gece taraması (04:00-09:00) + katmanlı pipeline ──
+  overnight_start_hour: 4
+  overnight_end_hour: 9
+  delivery_hour: 9
+  prefilter_concurrency: 3
+  deep_scan_max_assets: 6
+  per_asset_timeout_sec: 300
+  scan_wallclock_timeout_min: 240
+  heartbeat_interval_min: 10
+  tf_window: ["5m", "15m", "1h", "4h", "1d", "1w"]
 
 higher_timeframe_filter:
   enabled: true

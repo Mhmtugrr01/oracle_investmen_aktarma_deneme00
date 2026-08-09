@@ -1,13 +1,20 @@
 """
-PROJECT OLYMPUS — core/scanner.py (The R08 Final-Verdict Edition - True Async & ATR Shield)
-Her 4 saatte bir tüm varlık evrenini tarar.
-Her 15 dakikada bir izleme listesindeki varlıkların
-kritik seviyelere yakınlığını kontrol eder.
+PROJECT OLYMPUS V2 — core/scanner.py (4 KATMANLI PİPELINE)
+═══════════════════════════════════════════════════════════
+KATMAN 0 — REJİM MOTORU  : Makro rejim tarama başında BİR KEZ çekilir (512MB dostu)
+KATMAN 1 — PREFILTER     : Sınırlı eşzamanlılıkla hızlı momentum süzgeci (önbellekli veri)
+KATMAN 2 — DERİN PİPELINE: Aday başına timeout + heartbeat + duvar saati bütçesi + MTF
+KATMAN 3 — TESLİMAT      : Rejim korelasyonlu Digest v2, gece 04:00→09:00 penceresi
+
+Gece taraması 04:00'te başlar, tarama tamamlanınca (en geç 09:00) otomatik teslim edilir.
+/tarama komutu da aynı korumalı akışı on-demand tetikler (handler asla bloke olmaz).
 """
 
 from __future__ import annotations
 
 import asyncio
+import gc
+import json
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -17,6 +24,12 @@ import numpy as np
 import pandas_ta as ta
 import yfinance as yf
 from loguru import logger
+
+from core.asset_classifier import is_crypto
+from core.multi_tf import analyze_multi_tf, format_mtf_summary
+from core.regime_engine import RegimeSnapshot, correlate_signal_with_regime, get_regime_snapshot
+from core.scan_store import get_scan_store
+from tools.market_data import fetch_crypto_ohlcv, fetch_stock_macro_data
 
 
 class OracleScanner:
@@ -36,7 +49,12 @@ class OracleScanner:
         self._alert_cooldowns: dict[str, float] = {}  # Anti-Spam Sistemi
         self._last_full_scan: Optional[datetime] = None
         self._running = False
-        
+
+        # V2: tarama koruması + ilerleme takibi
+        self._scan_in_progress = False
+        self._scan_progress: dict[str, int] = {"scanned": 0, "total": 0, "found": 0}
+        self._last_regime: Optional[RegimeSnapshot] = None
+
         # Batch-fetching configuration to avoid rate limits and full-loop failures
         self._batch_size: int = int(self.scan_config.get("batch_size", 40))
         self._batch_cooldown: float = float(self.scan_config.get("batch_cooldown_sec", 1.7))
@@ -170,110 +188,310 @@ class OracleScanner:
             return 0.0
 
     async def _fetch_single_asset_data(self, symbol: str) -> tuple[str, Optional[pd.DataFrame]]:
-        """yfinance indirmesini izole ve thread-safe asenkron olarak çalıştırır."""
-        ticker = symbol.replace("/USDT", "-USD").replace("/USD", "-USD") if "/" in symbol else symbol
+        """
+        KATMAN 1 veri kaynağı — ÖNBELBEKLİ market_data fonksiyonlarını kullanır.
+        (Ham yf.download yerine: hem rate-limit dostu hem RAM dostu)
+        """
         try:
-            df = await asyncio.to_thread(
-                yf.download, ticker, period="60d", interval="1d", progress=False, auto_adjust=True
-            )
+            if is_crypto(symbol):
+                df = await fetch_crypto_ohlcv(symbol, timeframe="1d", limit=120)
+            else:
+                df = await fetch_stock_macro_data(symbol, period="6mo", interval="1d")
             return symbol, df
-        except Exception as e:
-            logger.warning(f"[SCANNER] {symbol} veri indirme başarısız: {e}")
+        except Exception as exc:
+            logger.debug(f"[SCANNER] {symbol} veri çekilemedi: {exc}")
             return symbol, None
 
     async def _pre_filter_assets(self, target_evren: list[str]) -> list[str]:
-        """Geniş evreni asenkron paralel havuzlarla hızlı ve güvenli süzgeçten geçirir."""
-        logger.info("[SCANNER] TRUE CONCURRENT QUANT MATRIX PROCESSING STARTED...")
-        candidates = []
-        
-        for i in range(0, len(target_evren), self._batch_size):
-            batch = target_evren[i : i + self._batch_size]
-            
-            # ── 🚀 CO-ROUTINE GATHERING (Gerçek Paralel Akış) ──
-            # Batch içindeki tüm varlık indirme işlemleri aynı anda asenkron olarak tetiklenir
-            tasks = [self._fetch_single_asset_data(sym) for sym in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for res in results:
-                if isinstance(res, Exception) or res is None:
-                    continue
-                symbol, df = res
-                if df is None or df.empty:
-                    continue
-                
-                k_score = self._compute_olympus_kinetic(df)
-                if k_score > 0.0:
-                    raw_sym = symbol.replace("-USD", "/USDT")
-                    candidates.append((raw_sym, k_score))
-                    
-            logger.info(f"[SCANNER] Concurrency Batch {(i//self._batch_size)+1} processed successfully.")
-            await asyncio.sleep(self._batch_cooldown)
+        """
+        KATMAN 1 — PREFILTER: OLYMPUS KINETIC süzgeci.
+        Eşzamanlılık `prefilter_concurrency` (varsayılan 3) ile sınırlandırılır;
+        böylece 512MB RAM'de çok sayıda eşzamanlı indirme belleği patlatmaz.
+        """
+        logger.info("[SCANNER] KATMAN 1 — PREFILTER başladı (OLYMPUS KINETIC)...")
+        concurrency = max(1, int(self.scan_config.get("prefilter_concurrency", 3)))
+        max_candidates = max(1, int(self.scan_config.get("deep_scan_max_assets", 6)))
+        sem = asyncio.Semaphore(concurrency)
+        candidates: list[tuple[str, float]] = []
 
-        sorted_cands = sorted(candidates, key=lambda x: x[1], reverse=True)[:5]
-        return [ass for ass, _ in sorted_cands]
+        async def _probe(symbol: str) -> None:
+            async with sem:
+                _, df = await self._fetch_single_asset_data(symbol)
+                if df is None or df.empty or len(df) < 25:
+                    return
+                try:
+                    k_score = self._compute_olympus_kinetic(df)
+                    if k_score > 0.0:
+                        candidates.append((symbol, k_score))
+                finally:
+                    del df  # RAM disiplini
+
+        chunk = concurrency * 4
+        for i in range(0, len(target_evren), chunk):
+            batch = target_evren[i : i + chunk]
+            await asyncio.gather(*[_probe(sym) for sym in batch], return_exceptions=True)
+
+        sorted_cands = sorted(candidates, key=lambda x: x[1], reverse=True)[:max_candidates]
+        logger.info(
+            f"[SCANNER] KATMAN 1 tamam: {len(candidates)} adaydan "
+            f"{len(sorted_cands)} derin analize geçiyor."
+        )
+        return [sym for sym, _ in sorted_cands]
 
     # =========================================================================
-    # ── ANA TARAMA METODU ──
+    # ── ANA TARAMA METODU (4 KATMANLI PİPELINE) ──
     # =========================================================================
-    async def _run_scan_once(self, notify_start: bool = True):
-        all_assets = self._get_all_assets()
-        logger.info(f"[SCANNER] Tam tarama OLYMPUS KINETIC PROTOKOLÜYLE Başlatıldı — İzlenen Toplam Derinliği: {len(all_assets)} Varlık")
-        if notify_start:
+    def _build_start_message(self, count: int, regime: Optional[RegimeSnapshot]) -> str:
+        lines = ["🔍 ORACLE TARAMA BAŞLADI (4 Katmanlı Pipeline)"]
+        lines.append(f"📊 {count} varlık taranacak — heartbeat ile takip edilecek.")
+        if regime is not None:
+            try:
+                emoji = {"RISK_ON": "🟢", "MIXED": "🟡", "RISK_OFF": "🔴", "NEUTRAL": "⚪"}.get(
+                    regime.primary_trend, "⚪"
+                )
+                lines.append(
+                    f"\n🌐 KATMAN 0 — REJİM: {emoji} {regime.primary_trend}"
+                    f" | Timing: {regime.intraday_timing}"
+                    f" | Risk İştahı: {regime.risk_appetite:.2f}"
+                )
+                lines.append(
+                    f"   USDT.D: {regime.usdt_d:.2f}% | BTC.D: {regime.btc_d:.2f}%"
+                    f" | DXY: {regime.dxy:.1f} | VIX: {regime.vix:.1f}"
+                )
+            except Exception:
+                pass
+        return "\n".join(lines)
+
+    async def _heartbeat_loop(self, interval_min: int) -> None:
+        """Tarama devam ederken periyodik ilerleme bildirimi (Telegram'ı asla bloke etmez)."""
+        interval_sec = max(30, int(interval_min) * 60)
+        while True:
+            await asyncio.sleep(interval_sec)
+            prog = self._scan_progress
             try:
                 await self.bot(
-                    "🔍 ORACLE TARAMA BAŞLADI\n"
-                    f"{len(all_assets)} varlık analiz ediliyor... (~15 dk)\n"
-                    "Sonuçlar hazır olduğunda otomatik bildirim gelecek."
+                    "⏳ ORACLE taraması devam ediyor...\n"
+                    f"   ✅ Derin analiz: {prog['scanned']}/{prog['total']}"
+                    f" | 🔥 Fırsat: {prog['found']}"
                 )
             except Exception as exc:
-                logger.warning(f"[SCANNER] Tarama başlangıç bildirimi gönderilemedi: {exc}")
+                logger.warning(f"[SCANNER] Heartbeat gönderilemedi: {exc}")
 
-        # ── 🛡️ CO-ROUTINE GATHERING SÜZGECİ (Filtreleme) ──
-        hot_5 = await self._pre_filter_assets(all_assets)
-
-        if not hot_5:
-            logger.info("[SCANNER] Bütün Evren Taranmıştır Ancak Kuant Süzgecine Liyakatle Geçen Asimetrik Pusu Bulunamamıştır! (İptal)")
-            return
-
-        logger.info(f"🔥 Süzgeç İnfazını Geçip MİMAR AI Zırhına (The Oracle) Alınan Sıcak Adaylar: {hot_5}")
-
-        opportunities: list[dict] = []
-        for asset in hot_5:
+    async def _record_opportunity(self, run_id: str, result: dict, regime: Optional[RegimeSnapshot]) -> None:
+        """Fırsatı rejimle korele eder ve scan_store'a yazar (kalıcılık + özet desteği)."""
+        direction = (
+            "LONG"
+            if result.get("signal") in ("STRONG_BUY", "ACCUMULATE", "LONG_FIRSAT")
+            else "SHORT"
+        )
+        corr: dict = {}
+        if regime is not None:
             try:
-                # Sadece süzgeci geçen sıcak 5 varlığı bizim ağır LangGraph pipeline'ına fırlatır!
-                result = await self._scan_single_asset(asset, "KINETIC_ALPHA")
-                if result and result.get("signal") not in ["AVOID", "WATCH", None]:
-                    opportunities.append(result)
-                    logger.info(
-                        f"[SCANNER] FIRSAT ONAYLANDI: {result.get('asset')} → {result.get('signal')} "
-                        f"(skor: {result.get('composite_pct', 0)}%)"
-                    )
-            except Exception as e:
-                logger.error(f"[SCANNER FAIL-SAFE] {asset} pipeline hatası: {e}")
-                continue
-                
-            await asyncio.sleep(2.0)
+                corr = correlate_signal_with_regime(tf="4h", direction=direction, regime=regime)
+                result["_correlation"] = corr
+            except Exception as exc:
+                logger.debug(f"[SCANNER] Rejim korelasyonu hatası: {exc}")
+        try:
+            await get_scan_store().record_result(
+                run_id=run_id,
+                symbol=str(result.get("asset", "")),
+                signal=str(result.get("signal", "")),
+                composite=float(result.get("composite_pct", 0)) / 100.0,
+                base_rr=float(result.get("base_rr") or 0.0),
+                t1=float(result.get("t1") or 0.0),
+                t2=float(result.get("t2") or 0.0),
+                t3=float(result.get("t3") or 0.0),
+                stop_loss=float(result.get("stop_loss") or 0.0),
+                trade_type=str(result.get("trade_type") or ""),
+                oracle_summary=str(result.get("oracle_summary") or ""),
+                tf_bias_json=json.dumps(
+                    result.get("timeframe_biases", {}), ensure_ascii=False, default=str
+                ),
+                regime_json=json.dumps(
+                    {
+                        "primary_trend": getattr(regime, "primary_trend", None) if regime else None,
+                        "intraday_timing": getattr(regime, "intraday_timing", None) if regime else None,
+                        "risk_appetite": getattr(regime, "risk_appetite", None) if regime else None,
+                    },
+                    default=str,
+                ),
+                correlation_json=json.dumps(corr, default=str),
+            )
+        except Exception as exc:
+            logger.debug(f"[SCANNER] Sonuç kaydı hatası: {exc}")
 
-        if opportunities:
-            await self._send_opportunity_digest(opportunities)
-        else:
-            logger.info("[SCANNER] Bu turda işlem kaliteli fırsat bulunamadı.")
+    async def _run_scan_once(self, notify_start: bool = True, trigger: str = "otomatik") -> None:
+        """
+        4 katmanlı tam tarama:
+          Katman 0: Rejim BİR KEZ çekilir (tüm varlıklar paylaşır)
+          Katman 1: Prefilter (sınırlı eşzamanlılık, önbellekli veri)
+          Katman 2: Derin pipeline sıralı + varlık başına timeout + heartbeat + gc
+          Katman 3: Digest v2 teslimatı (rejim korelasyonu + MTF + geçerlilik penceresi)
+        """
+        if self._scan_in_progress:
+            logger.info("[SCANNER] Tarama zaten aktif — çift tetikleme koruması (guard).")
+            return
+        self._scan_in_progress = True
+        run_id = f"scan_{int(time.time())}"
+        store = get_scan_store()
+        started = time.monotonic()
+        try:
+            await store.start_run(run_id, trigger)
+            all_assets = self._get_all_assets()
 
-        self._last_full_scan = datetime.now(timezone.utc)
+            # ── KATMAN 0: REJİM MOTORU (tüm tarama için tek çekiş) ──────────
+            regime: Optional[RegimeSnapshot] = None
+            try:
+                regime = await get_regime_snapshot(force=True)
+                self._last_regime = regime
+            except Exception as exc:
+                logger.warning(f"[SCANNER] Rejim motoru hatası (tarama sorunsuz devam): {exc}")
+
+            if notify_start:
+                try:
+                    await self.bot(self._build_start_message(len(all_assets), regime))
+                except Exception as exc:
+                    logger.warning(f"[SCANNER] Başlangıç bildirimi gönderilemedi: {exc}")
+
+            # ── KATMAN 1: PREFILTER ─────────────────────────────────────────
+            hot = await self._pre_filter_assets(all_assets)
+            if not hot:
+                logger.info("[SCANNER] Bu turda süzgeci geçen aday yok — tarama tamam.")
+                await store.finish_run(run_id, "no_candidates", 0, 0)
+                return
+
+            # ── KATMAN 2: DERİN PİPELINE ────────────────────────────────────
+            budget_min = max(10, int(self.scan_config.get("scan_wallclock_timeout_min", 240)))
+            deadline = time.monotonic() + budget_min * 60
+            per_asset_timeout = max(
+                30, int(self.scan_config.get("per_asset_timeout_sec", 300))
+            )
+            heartbeat_min = max(1, int(self.scan_config.get("heartbeat_interval_min", 10)))
+            self._scan_progress = {"scanned": 0, "total": len(hot), "found": 0}
+
+            heartbeat_task = asyncio.create_task(self._heartbeat_loop(heartbeat_min))
+            opportunities: list[dict] = []
+            try:
+                for asset in hot:
+                    if time.monotonic() >= deadline:
+                        logger.warning("[SCANNER] Duvar saati bütçesi doldu — kısmi teslimata geçiliyor.")
+                        try:
+                            await self.bot(
+                                "⏳ Tarama süre bütçesi doldu; "
+                                f"{len(opportunities)} fırsat ile teslim ediliyor."
+                            )
+                        except Exception:
+                            pass
+                        break
+
+                    try:
+                        result = await asyncio.wait_for(
+                            self._scan_single_asset(asset, "KINETIC_ALPHA"),
+                            timeout=per_asset_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            f"[SCANNER] {asset} pipeline timeout ({per_asset_timeout}s) — atlandı."
+                        )
+                        continue
+                    except Exception as exc:
+                        logger.error(f"[SCANNER FAIL-SAFE] {asset} pipeline hatası: {exc}")
+                        continue
+                    finally:
+                        self._scan_progress["scanned"] += 1
+                        gc.collect()  # Render 512MB RAM disiplini
+
+                    if result and result.get("signal") not in ("AVOID", "WATCH", None):
+                        # Varlık özelinde MTF analizi (5m/15m/1h/4h/1d/1w)
+                        try:
+                            mtf = await asyncio.wait_for(
+                                analyze_multi_tf(asset, max_concurrency=2),
+                                timeout=min(per_asset_timeout, 180),
+                            )
+                            if mtf is not None:
+                                result["mtf_summary"] = format_mtf_summary(mtf, asset)
+                                result["mtf_bias"] = mtf.signal_bias
+                                result["mtf_entry_timing"] = mtf.entry_timing
+                                del mtf
+                        except Exception as exc:
+                            logger.debug(f"[SCANNER] {asset} MTF analizi atlandı: {exc}")
+
+                        opportunities.append(result)
+                        self._scan_progress["found"] = len(opportunities)
+                        logger.info(
+                            f"[SCANNER] FIRSAT ONAYLANDI: {result.get('asset')} → "
+                            f"{result.get('signal')} (skor: {result.get('composite_pct', 0)}%)"
+                        )
+                        await self._record_opportunity(run_id, result, regime)
+            finally:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            # ── KATMAN 3: TESLİMAT (Digest v2) ──────────────────────────────
+            await self._send_opportunity_digest(opportunities, regime)
+            status = "done" if opportunities else "empty"
+            await store.finish_run(run_id, status, len(hot), len(opportunities))
+            self._last_full_scan = datetime.now(timezone.utc)
+            logger.info(
+                f"[SCANNER] Tarama tamamlandı ({int(time.monotonic() - started)}s, "
+                f"{len(opportunities)} fırsat)."
+            )
+        except Exception as exc:
+            logger.error(f"[SCANNER] Tarama beklenmeyen hata: {exc}")
+            try:
+                await store.finish_run(run_id, "error", 0, 0)
+            except Exception:
+                pass
+        finally:
+            self._scan_in_progress = False
 
     async def _full_scan_loop(self):
-        interval_hours = self.scan_config.get("full_scan_interval_hours", 12) # Günde 2 Kez Tam Tarama için 12 Saat
-        interval_sec = interval_hours * 3600
-        await asyncio.sleep(60)
+        """
+        Gece penceresi (varsayılan 04:00-09:00 İstanbul) içinde tam tarama yapar.
+        Pencere dışında bir sonraki pencere başlangıcına kadar uyur.
+        Hata olursa pencere içinde 10 dk sonra otomatik yeniden dener.
+        """
+        import pytz
+
+        tz = pytz.timezone("Europe/Istanbul")
+        overnight_start = int(self.scan_config.get("overnight_start_hour", 4))
+        overnight_end = int(self.scan_config.get("overnight_end_hour", 9))
+
+        await asyncio.sleep(45)  # başlangıç stabilizasyonu
         while self._running:
             try:
-                # Kullanıcı işlemleri çökmesin diye Tarama görevi Event Loop içinden korumaya alınıyor!
-                await asyncio.wait_for(self._run_scan_once(), timeout=1600) 
-            except asyncio.TimeoutError:
-                logger.error("[SCANNER] Tarama süresi 25 dakikayı geçti, döngü zorla atlandı.")
-            except Exception as e:
-                logger.error(f"[SCANNER] Tam tarama hata aldı: {e}")
-            await asyncio.sleep(interval_sec)
+                now = datetime.now(tz)
+                in_window = overnight_start <= now.hour < overnight_end
+                if in_window:
+                    last = self._last_full_scan
+                    needs_scan = self._scan_in_progress is False and (
+                        last is None or (now - last.astimezone(tz)).total_seconds() > 30 * 60
+                    )
+                    if needs_scan:
+                        logger.info(
+                            f"[SCANNER] Gece penceresi aktif ({overnight_start:02d}:00-{overnight_end:02d}:00) "
+                            f"— tam tarama başlatılıyor."
+                        )
+                        await self._run_scan_once(notify_start=True, trigger="gece_taramasi")
+                        continue
+                else:
+                    logger.info(
+                        f"[SCANNER] Gece penceresi kapalı — sonraki tarama "
+                        f"{overnight_start:02d}:00'te planlandı."
+                    )
+
+                next_start = now.replace(hour=overnight_start, minute=0, second=0, microsecond=0)
+                if now >= next_start:
+                    next_start += timedelta(days=1)
+                await asyncio.sleep((next_start - now).total_seconds())
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(f"[SCANNER] Tam tarama döngüsü hatası: {exc}")
+                await asyncio.sleep(600)  # pencere içinde 10 dk sonra tekrar dene
 
     async def _scan_single_asset(self, asset: str, category: str) -> Optional[dict]:
         try:
@@ -424,11 +642,33 @@ class OracleScanner:
             await asyncio.sleep(wait_sec)
             await self._send_daily_briefing()
 
-    async def _send_opportunity_digest(self, opportunities: list):
+    async def _send_opportunity_digest(self, opportunities: list, regime: Optional[RegimeSnapshot] = None):
+        """KATMAN 3 — TESLİMAT: Rejim özeti + MTF matrisi + geçerlilik penceresi (Digest v2)."""
         if not opportunities:
             return
 
-        lines = ["\n🛡️ 𝗢𝗟𝗬𝗠𝗣𝗨𝗦 𝗢𝗥𝗔𝗖𝗟𝗘 (KİNETİK SÜZGEÇ) NİHAİ KONTROL ODASI\n"]
+        lines = ["🛡️ 𝗢𝗟𝗬𝗠𝗣𝗨𝗦 𝗢𝗥𝗔𝗖𝗟𝗘 — SABAH TESLİMAT RAPORU\n"]
+
+        if regime is not None:
+            try:
+                emoji = {"RISK_ON": "🟢", "MIXED": "🟡", "RISK_OFF": "🔴", "NEUTRAL": "⚪"}.get(
+                    regime.primary_trend, "⚪"
+                )
+                lines.append(
+                    f"🌐 REJİM: {emoji} {regime.primary_trend}"
+                    f" | Timing: {regime.intraday_timing}"
+                    f" | Risk İştahı: {regime.risk_appetite:.2f}"
+                )
+                lines.append(
+                    f"   USDT.D: {regime.usdt_d:.2f}% | BTC.D: {regime.btc_d:.2f}%"
+                    f" | DXY: {regime.dxy:.1f} | VIX: {regime.vix:.1f}"
+                )
+                if getattr(regime, "warnings", None):
+                    lines.append(f"   ⚠️ {'; '.join(regime.warnings[:3])}")
+                lines.append("")
+            except Exception:
+                pass
+
         lines.append(f"📊 {len(opportunities)} fırsat tespit edildi:\n")
 
         signal_emojis = {
@@ -439,16 +679,29 @@ class OracleScanner:
             "REDUCE": "🟠",
             "LONG_FIRSAT": "🟢",
             "SHORT_FIRSAT": "🔴",
+            "WATCHLIST_PREMIUM": "👁️",
         }
 
         for opp in sorted(opportunities, key=lambda x: x.get("composite_pct", 0), reverse=True):
-            emoji = signal_emojis.get(opp["signal"], "⚪")
+            emoji = signal_emojis.get(opp.get("signal", ""), "⚪")
             rr = f"R:R 1:{opp['base_rr']:.1f}" if opp.get("base_rr") else ""
             lines.append(
-                f"🔥 {opp['asset']} — {opp['signal']} | Puan Onay: {opp['composite_pct']}% | {rr}"
+                f"🔥 {opp.get('asset')} — {opp.get('signal')} | Puan Onay: "
+                f"{opp.get('composite_pct')}% | {rr}"
             )
+            if opp.get("mtf_summary"):
+                lines.append(f"   {opp['mtf_summary']}")
+            corr = opp.get("_correlation", {})
+            if corr.get("validity_text"):
+                marker = "✅" if corr.get("aligned") else "⚠️"
+                lines.append(f"   {marker} {corr['validity_text']}")
+            if corr.get("invalidation_text"):
+                lines.append(f"   🚫 {corr['invalidation_text']}")
 
-        lines.append(f"⏱ Olympus Fişleniş Tarihi: {datetime.now().strftime('%H:%M')} | /oracle <symbol> Komutu İşleme Hazırdır.")
+        lines.append(
+            f"\n⏱ Rapor: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+            " | Detay: /oracle <symbol>"
+        )
 
         await self.bot("\n".join(lines))
 
@@ -469,10 +722,19 @@ class OracleScanner:
         await self.bot(msg)
 
     async def _send_daily_briefing(self):
+        import pytz
+
+        tz = pytz.timezone("Europe/Istanbul")
         msg_lines = [
             "🌅 OLYMPUS ORACLE — GÜNLÜK BRİFİNG",
             f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n",
             "Sabah taraması başlatılıyor, sonuçlar kısa sürede gelecek...",
         ]
         await self.bot("\n".join(msg_lines))
+
+        # Çift tarama koruması: bugün zaten gece taraması yapıldıysa tekrar tetikleme
+        last = self._last_full_scan
+        if last is not None and last.astimezone(tz).date() == datetime.now(tz).date():
+            logger.info("[BRIEFING] Bugünkü gece taraması tamamlandı, çift tarama atlandı.")
+            return
         await self._run_scan_once()

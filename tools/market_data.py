@@ -54,6 +54,8 @@ _EXCHANGES_CACHE: dict[str, Any] = {}
 _DATA_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
 
 _CACHE_TTL_SEC = int(os.getenv("ORACLE_DATA_CACHE_TTL_SEC", "900"))
+# ── RAM KORUMASI (Render 512MB): LRU boyut limiti — en eski girişler atılır ──
+_CACHE_MAX_ENTRIES = int(os.getenv("ORACLE_DATA_CACHE_MAX_ENTRIES", "40"))
 
 
 def build_ssl_context(verify: bool | None = None) -> ssl.SSLContext:
@@ -113,11 +115,17 @@ def _cache_get_df(key: str) -> pd.DataFrame | None:
     if time.time() - ts > _CACHE_TTL_SEC:
         _DATA_CACHE.pop(key, None)
         return None
+    # LRU dokunuşu: kullanılan anahtarı en sona taşı (eviction en eskiyi atar)
+    _DATA_CACHE[key] = hit
     return df.copy()
 
 
 def _cache_set_df(key: str, df: pd.DataFrame) -> None:
     _DATA_CACHE[key] = (time.time(), df.copy())
+    # RAM sınırı: limiti aşınca en eski (ilk) girişleri at
+    if len(_DATA_CACHE) > _CACHE_MAX_ENTRIES:
+        for old_key in list(_DATA_CACHE.keys())[: len(_DATA_CACHE) - _CACHE_MAX_ENTRIES]:
+            _DATA_CACHE.pop(old_key, None)
 
 
 async def close_exchange_pool() -> None:
