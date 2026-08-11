@@ -129,10 +129,14 @@ class ScanScheduleConfig(BaseModel):
     overnight_end_hour: int = Field(default=9, ge=0, le=23)
     delivery_hour: int = Field(default=9, ge=0, le=23)
     prefilter_concurrency: int = Field(default=3, ge=1, le=16)
+    prefilter_min_score: float = Field(default=30.0, ge=0.0, le=100.0)
     deep_scan_max_assets: int = Field(default=6, ge=1, le=21)
     per_asset_timeout_sec: int = Field(default=300, ge=30, le=1800)
     scan_wallclock_timeout_min: int = Field(default=240, ge=10, le=1440)
     heartbeat_interval_min: int = Field(default=10, ge=1, le=120)
+    # FAZ A — Kaçırılan tarama güvenlik ağı: son taramadan bu saatten fazla
+    # geçtiyse ve bugün tarama yapılmadıysa pencere dışında telafi başlat.
+    missed_scan_grace_hours: float = Field(default=24.0, ge=1.0, le=720.0)
     tf_window: list[str] = Field(
         default_factory=lambda: ["5m", "15m", "1h", "4h", "1d", "1w"]
     )

@@ -76,27 +76,102 @@ llm:
   api_key_env: "OPENROUTER_API_KEY"
 
 asset_universe:
+  # ── KRİPTO (likit Binance USDT çiftleri, ~40) ──
   crypto:
     - "BTC/USDT"
     - "ETH/USDT"
+    - "BNB/USDT"
+    - "XRP/USDT"
+    - "SOL/USDT"
+    - "ADA/USDT"
+    - "DOGE/USDT"
+    - "TRX/USDT"
+    - "LINK/USDT"
+    - "AVAX/USDT"
+    - "TON/USDT"
+    - "XLM/USDT"
+    - "DOT/USDT"
+    - "SHIB/USDT"
+    - "LTC/USDT"
+    - "BCH/USDT"
+    - "UNI/USDT"
+    - "ATOM/USDT"
+    - "XMR/USDT"
+    - "ETC/USDT"
+    - "ICP/USDT"
+    - "FIL/USDT"
+    - "HBAR/USDT"
+    - "APT/USDT"
+    - "NEAR/USDT"
+    - "ARB/USDT"
+    - "OP/USDT"
+    - "SUI/USDT"
     - "INJ/USDT"
     - "RNDR/USDT"
     - "FET/USDT"
+    - "PEPE/USDT"
+    - "WIF/USDT"
+    - "BONK/USDT"
+    - "SEI/USDT"
+    - "TIA/USDT"
+    - "STX/USDT"
+    - "MKR/USDT"
+    - "AAVE/USDT"
+    - "LDO/USDT"
+  # ── ABD HİSSELERİ (mega-cap + sektör liderleri, ~40) ──
   us_stocks:
+    - "AAPL"
+    - "MSFT"
+    - "GOOGL"
+    - "AMZN"
     - "NVDA"
+    - "META"
     - "TSLA"
-    - "MSTR"
-    - "COIN"
-    - "INTC"
+    - "AVGO"
     - "AMD"
+    - "INTC"
+    - "MU"
+    - "QCOM"
+    - "ORCL"
+    - "CRM"
+    - "ADBE"
+    - "NFLX"
+    - "COIN"
+    - "MSTR"
+    - "PYPL"
+    - "SHOP"
+    - "PLTR"
+    - "ARM"
+    - "SMCI"
+    - "TSM"
+    - "ASML"
     - "AMAT"
-    - "SPY"
+    - "LRCX"
+    - "KLAC"
+    - "PANW"
+    - "CRWD"
+    - "SNOW"
+    - "NOW"
+    - "UBER"
+    - "ABBV"
+    - "JNJ"
+    - "JPM"
+    - "BAC"
+    - "XOM"
+    - "CVX"
+    - "WMT"
+  # ── BIST (likit statik liste) ──
   bist:
     - "ASTOR.IS"
     - "EUPWR.IS"
     - "THYAO.IS"
     - "GARAN.IS"
     - "EREGL.IS"
+    - "ASELS.IS"
+    - "SISE.IS"
+    - "AKBNK.IS"
+    - "BIMAS.IS"
+    - "TUPRS.IS"
   commodities:
     - "GC=F"
     - "SI=F"
@@ -126,10 +201,14 @@ scan_schedule:
   overnight_end_hour: 9
   delivery_hour: 9
   prefilter_concurrency: 3
+  prefilter_min_score: 30.0
   deep_scan_max_assets: 6
   per_asset_timeout_sec: 300
   scan_wallclock_timeout_min: 240
   heartbeat_interval_min: 10
+  # FAZ A — Kaçırılan tarama güvenlik ağı: son taramadan bu saatten fazla
+  # geçtiyse ve bugün tarama yapılmadıysa pencere dışında da telafi başlat.
+  missed_scan_grace_hours: 24
   tf_window: ["5m", "15m", "1h", "4h", "1d", "1w"]
 
 higher_timeframe_filter:

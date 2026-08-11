@@ -65,6 +65,7 @@ class ClusterEngine:
         self,
         symbols: list[str],
         lookback_days: int = 30,
+        fetch_close: Any | None = None,
     ) -> list[SignalCluster]:
         """
         Sinyal veren varlıkları korelasyonlarına göre kümele.
@@ -72,6 +73,9 @@ class ClusterEngine:
         Args:
             symbols: Sinyal üreten varlık sembolleri listesi
             lookback_days: Korelasyon hesabı için gün sayısı
+            fetch_close: Opsiyonel async(symbol) -> OHLCV DataFrame | None callback.
+                Verilirse yfinance yerine bu kullanılır (scanner market_data cache'i).
+                Böylece prefilter ile aynı veri tekrar indirilmez (Faz 2.2 ilkesi).
             
         Returns:
             SignalCluster listesi (her küme bir tema)
@@ -79,7 +83,7 @@ class ClusterEngine:
         if len(symbols) < 2:
             # Tek varlık varsa kümeleme gereksiz
             if symbols:
-                member = await self._score_symbol(symbols[0], lookback_days)
+                member = await self._score_symbol(symbols[0], lookback_days, fetch_close=fetch_close)
                 return [SignalCluster(
                     cluster_id=0,
                     theme_description=f"Tekil varlık: {symbols[0]}",
@@ -89,7 +93,7 @@ class ClusterEngine:
             return []
 
         # 1. Fiyat verilerini çek
-        price_data = await self._fetch_price_data(symbols, lookback_days)
+        price_data = await self._fetch_price_data(symbols, lookback_days, fetch_close=fetch_close)
         
         if len(price_data) < 2:
             logger.warning("[CLUSTER] Yetersiz fiyat verisi, kümeleme atlanıyor")
@@ -106,7 +110,10 @@ class ClusterEngine:
         for idx, cluster_symbols in enumerate(clusters):
             members = []
             for sym in cluster_symbols:
-                member = await self._score_symbol(sym, lookback_days)
+                member = await self._score_symbol(
+                    sym, lookback_days, fetch_close=fetch_close,
+                    pre_fetched=price_data.get(sym),
+                )
                 members.append(member)
             
             # Liderleri seç (alpha_score'a göre sırala)
@@ -126,14 +133,26 @@ class ClusterEngine:
         return result
 
     async def _fetch_price_data(
-        self, symbols: list[str], days: int
+        self, symbols: list[str], days: int, fetch_close: Any | None = None
     ) -> dict[str, pd.Series]:
         """Varlıkların kapanış fiyat serilerini çek."""
         price_data: dict[str, pd.Series] = {}
         
         async def fetch_one(sym: str) -> tuple[str, pd.Series | None]:
             try:
-                # Kripto için yfinance formatına çevir
+                # 1) Enjekte edilmiş veri kaynağı varsa önce onu dene (cache dostu)
+                if fetch_close is not None:
+                    try:
+                        df = await fetch_close(sym)
+                        if df is not None and not df.empty:
+                            close = df["Close"].dropna() if "Close" in df.columns else (
+                                df["close"].dropna() if "close" in df.columns else df.iloc[:, 0].dropna()
+                            )
+                            if len(close) >= 10:
+                                return sym, close
+                    except Exception:
+                        pass  # yfinance fallback'e düş
+                # 2) yfinance fallback
                 ticker = self._to_yf_ticker(sym)
                 if not ticker:
                     return sym, None
@@ -218,7 +237,13 @@ class ClusterEngine:
         
         return [list(c) for c in clusters]
 
-    async def _score_symbol(self, symbol: str, days: int) -> ClusterMember:
+    async def _score_symbol(
+        self,
+        symbol: str,
+        days: int,
+        fetch_close: Any | None = None,
+        pre_fetched: pd.Series | None = None,
+    ) -> ClusterMember:
         """
         Bir varlık için 4 faktörlü skor hesapla:
         1. Relative Strength (küme ortalamasına göre güç)
@@ -227,34 +252,50 @@ class ClusterEngine:
         4. Liquidity (USD hacmi)
         """
         try:
-            ticker = self._to_yf_ticker(symbol)
-            if not ticker:
+            data = None
+            # 1) Önceden çekilmiş kapanış varsa onu kullan (cache dostu)
+            if pre_fetched is not None and len(pre_fetched) >= 10:
+                close = pre_fetched.astype(float).dropna()
+                volume = pd.Series(dtype=float)  # hacim yoksa liquidity düşük kalır
+                data = close
+                # fetch_close gerçek OHLCV döndürebilir — hacim için yine de yfinance'a
+                # düşmeyelim; volume momentum 0 varsayılıp alpha skoru güvenli kalır.
+            # 2) Aksi halde yfinance'dan çek (hacim dahil)
+            if data is None:
+                ticker = self._to_yf_ticker(symbol)
+                if not ticker:
+                    return self._default_member(symbol)
+                
+                raw = await asyncio.to_thread(
+                    yf.download,
+                    ticker,
+                    period=f"{days * 2}d",  # Volume momentum için daha fazla veri
+                    interval="1d",
+                    progress=False,
+                    auto_adjust=True,
+                )
+                
+                if raw is None or len(raw) < 10:
+                    return self._default_member(symbol)
+                
+                close = raw["Close"].astype(float).dropna()
+                volume = raw["Volume"].astype(float)
+            
+            if len(close) < 10:
                 return self._default_member(symbol)
-            
-            data = await asyncio.to_thread(
-                yf.download,
-                ticker,
-                period=f"{days * 2}d",  # Volume momentum için daha fazla veri
-                interval="1d",
-                progress=False,
-                auto_adjust=True,
-            )
-            
-            if data is None or len(data) < 10:
-                return self._default_member(symbol)
-            
-            close = data["Close"]
-            volume = data["Volume"]
             
             # 1. Relative Strength: Son 5-10 barın % değişimi
-            returns_5d = (close.iloc[-1] / close.iloc[-5] - 1) * 100
-            returns_10d = (close.iloc[-1] / close.iloc[-10] - 1) * 100
+            returns_5d = (float(close.iloc[-1]) / float(close.iloc[-5]) - 1) * 100
+            returns_10d = (float(close.iloc[-1]) / float(close.iloc[-10]) - 1) * 100
             rs_raw = (returns_5d * 0.6 + returns_10d * 0.4)  # 0-100 arası normalize edilecek
             
             # 2. Volume Momentum: Son 5 bar / Önceki 5 bar ortalama hacim
-            recent_vol = volume.iloc[-5:].mean()
-            prev_vol = volume.iloc[-10:-5].mean()
-            vol_momentum = (recent_vol / prev_vol - 1) * 100 if prev_vol > 0 else 0
+            if volume is not None and len(volume) >= 10:
+                recent_vol = volume.iloc[-5:].mean()
+                prev_vol = volume.iloc[-10:-5].mean()
+                vol_momentum = (recent_vol / prev_vol - 1) * 100 if prev_vol > 0 else 0
+            else:
+                vol_momentum = 0.0
             
             # 3. Signal Clarity: Fiyat yapısının "temizliği"
             # Basit versiyon: son 20 barın volatilitesi (düşük vol = temiz trend)
@@ -263,7 +304,10 @@ class ClusterEngine:
             clarity = max(0, 100 - volatility * 5)  # Düşük volatilite = yüksek netlik
             
             # 4. Liquidity: Günlük ortalama USD hacmi (fiyat * hacim)
-            avg_daily_volume_usd = (close.iloc[-20:] * volume.iloc[-20:]).mean()
+            if volume is not None and len(volume) >= 20:
+                avg_daily_volume_usd = (close.iloc[-20:] * volume.iloc[-20:]).mean()
+            else:
+                avg_daily_volume_usd = 0.0
             
             # Normalize et (0-1)
             rs_norm = min(1.0, max(0.0, (rs_raw + 20) / 40))  # -20% → +20% arası
@@ -315,27 +359,22 @@ class ClusterEngine:
     def _to_yf_ticker(self, symbol: str) -> str | None:
         """Sembolü yfinance formatına çevir."""
         symbol = symbol.upper()
-        
-        # Kripto mapping
-        crypto_map = {
-            "BTC/USDT": "BTC-USD",
-            "ETH/USDT": "ETH-USD",
-            "INJ/USDT": "INJ-USD",
-            "RNDR/USDT": "RNDR-USD",
-            "FET/USDT": "FET-USD",
-        }
-        
-        if symbol in crypto_map:
-            return crypto_map[symbol]
-        
+
+        # Genel kripto eşlemesi: BTC/USDT → BTC-USD (40+ sembolü tek kuralda çözer)
+        if "/" in symbol:
+            base = symbol.split("/")[0]
+            if base in ("USDT", "USDC", "BUSD"):
+                return None
+            return f"{base}-USD"
+
         # BIST
         if symbol.endswith(".IS"):
             return symbol
-        
+
         # ABD hisse
         if symbol.isalpha():
             return symbol
-        
+
         return None
 
     def _default_member(self, symbol: str) -> ClusterMember:
@@ -368,7 +407,8 @@ def get_cluster_engine() -> ClusterEngine:
 async def cluster_and_rank_signals(
     symbols: list[str],
     lookback_days: int = 30,
+    fetch_close: Any | None = None,
 ) -> list[SignalCluster]:
     """Convenience function: Sinyalleri kümele ve sırala."""
     engine = get_cluster_engine()
-    return await engine.cluster_signals(symbols, lookback_days)
+    return await engine.cluster_signals(symbols, lookback_days, fetch_close=fetch_close)

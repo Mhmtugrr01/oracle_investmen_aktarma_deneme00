@@ -58,6 +58,9 @@ class MultiTFAnalysis:
     validity_text: str = ""
     notes: list[str] = field(default_factory=list)
     partial: bool = False  # bazı TF'ler çekilemedi mi?
+    # ── FASE E: teknik analiz teyit sayacı (divergence/hook/breakout/CHoCH) ──
+    bull_confirmations: int = 0
+    bear_confirmations: int = 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -178,6 +181,19 @@ async def analyze_multi_tf(
         analysis.notes.append(
             f"15m RSI Trendline Break: {points['15m'].get('rsi_break_direction', '?')}"
         )
+    # ── FASE E: divergence / hook / breakout notları ────────────────────────
+    for tf in ("5m", "15m", "1h", "4h", "1d"):
+        p = points.get(tf, {})
+        div = p.get("divergence", "NONE")
+        if div and div != "NONE":
+            analysis.notes.append(
+                f"{tf} {div.replace('_DIVERGENCE', '')} "
+                f"({p.get('divergence_strength', '?')})"
+            )
+        if p.get("rsi_hook"):
+            analysis.notes.append(f"{tf} RSI hook (30 geri alımı)")
+        if p.get("price_breakout"):
+            analysis.notes.append(f"{tf} düşeni kırdı (hacim teyitli)")
 
     return analysis
 
@@ -208,6 +224,33 @@ def aggregate_mtf_points(
     else:
         analysis.signal_bias = "NEUTRAL"
 
+    # ── FASE E: teknik teyit sayacı (divergence/hook/breakout/CHoCH) ────────
+    bull_c = bear_c = 0
+    for p in points.values():
+        div = p.get("divergence", "NONE")
+        if div in ("POSITIVE_DIVERGENCE", "HIDDEN_BULLISH_DIVERGENCE"):
+            bull_c += 2 if p.get("divergence_strength") == "STRONG" else 1
+        elif div in ("NEGATIVE_DIVERGENCE", "HIDDEN_BEARISH_DIVERGENCE"):
+            bear_c += 2 if p.get("divergence_strength") == "STRONG" else 1
+        if p.get("rsi_hook"):
+            bull_c += 1
+        if p.get("price_breakout"):
+            bull_c += 1
+        if p.get("rsi_breakout"):
+            bull_c += 1
+        if p.get("choch_detected"):
+            if p.get("choch_direction") == "BULLISH":
+                bull_c += 2 if p.get("choch_strength") == "STRONG" else 1
+            elif p.get("choch_direction") == "BEARISH":
+                bear_c += 2 if p.get("choch_strength") == "STRONG" else 1
+        if p.get("rsi_trendline_break"):
+            if p.get("rsi_break_direction") == "BULLISH":
+                bull_c += 1
+            elif p.get("rsi_break_direction") == "BEARISH":
+                bear_c += 1
+    analysis.bull_confirmations = bull_c
+    analysis.bear_confirmations = bear_c
+
     # ── GİRİŞ ZAMANLAMASI (düşük TF) ────────────────────────────────────────
     low_bias = []
     for tf in ("5m", "15m"):
@@ -222,6 +265,21 @@ def aggregate_mtf_points(
             analysis.entry_timing = "AVOID"
         else:
             analysis.entry_timing = "WAIT"
+
+    # ── FASE E: düşük TF'de boğa teyidi → WAIT'i NOW'a yükselt ──────────────
+    if analysis.entry_timing == "WAIT":
+        for tf in ("5m", "15m"):
+            p = points.get(tf, {})
+            if (
+                p.get("divergence") in ("POSITIVE_DIVERGENCE", "HIDDEN_BULLISH_DIVERGENCE")
+                or p.get("rsi_hook")
+                or p.get("price_breakout")
+            ):
+                analysis.entry_timing = "NOW"
+                analysis.notes.append(
+                    f"{tf} boğa teyidi (divergence/hook/breakout) → giriş NOW"
+                )
+                break
 
     # ── GEÇERLİLİK ALANI (yüksek TF hizalaması) ─────────────────────────────
     higher = [tf for tf in ("1h", "4h", "1d", "1w") if tf in points]
@@ -245,6 +303,19 @@ def aggregate_mtf_points(
     else:
         analysis.validity_tf = "1h"
         analysis.validity_text = "TF'ler karışık — net yön yok, yüksek TF teyidi bekle."
+
+    # ── FASE E: teyit sayacı geçerlilik metnine eklenir ─────────────────────
+    if analysis.signal_bias != "NEUTRAL":
+        if analysis.bull_confirmations > analysis.bear_confirmations:
+            analysis.validity_text += (
+                f" Teknik teyit: {analysis.bull_confirmations} boğa "
+                f"vs {analysis.bear_confirmations} ayı sinyali."
+            )
+        elif analysis.bear_confirmations > analysis.bull_confirmations:
+            analysis.validity_text += (
+                f" Teknik teyit: {analysis.bear_confirmations} ayı "
+                f"vs {analysis.bull_confirmations} boğa sinyali."
+            )
 
     return analysis
 

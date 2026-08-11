@@ -419,7 +419,20 @@ def format_oracle_response(state: OracleState) -> str:
 
     exchange = "BINANCE"
     timestamp = state.updated_at.strftime("%Y-%m-%d %H:%M UTC")
-    validity_period = "24 saat"
+    # ── FAZ C: FİYAT BAZLI GEÇERLİLİK (zaman ikincil) ──
+    inv = state.invalidation_level
+    direction = state.signal_direction
+    validity_lines = []
+    if inv is not None and direction == SignalDirection.LONG:
+        validity_lines.append(f"Fiyat {inv:.4f} altına inmedikçe geçerli (İPTAL seviyesi)")
+    elif inv is not None and direction == SignalDirection.SHORT:
+        validity_lines.append(f"Fiyat {inv:.4f} üstüne çıkmadıkça geçerli (İPTAL seviyesi)")
+    elif inv is not None:
+        validity_lines.append(f"İptal seviyesi: {inv:.4f}")
+    else:
+        validity_lines.append("Giriş bölgesi içinde kaldığı sürece geçerli")
+    validity_lines.append("⏱️ Referans süre: ~24-72 saat (ort. sinyal çözülme süresi)")
+    validity_block = "\n".join(validity_lines)
 
     entry = _format_price(state.entry_price)
     stop = _format_price(state.stop_loss)
@@ -518,7 +531,7 @@ def format_oracle_response(state: OracleState) -> str:
         f"{whale_strategy_line}"
         "⚠️ UYARILAR:\n"
         f"{area_context}\n\n"
-        f"📅 GEÇERLİLİK: {validity_period}\n"
+        f"📅 GEÇERLİLİK:\n{validity_block}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -924,6 +937,41 @@ class TelegramHandler:
             whale_strat = next((m for m in (state.messages or []) if m.startswith("[WHALE_STRATEGY]")), None)
             if whale_strat:
                 lines += ["", "🐋 BALİNA STRATEJİSİ:", f"  {whale_strat.replace('[WHALE_STRATEGY] ','')}"]
+
+            # ── ADIM 4: KRİTER GEÇİŞ/BAŞARISIZLIK DÖKÜMÜ ─────────────────
+            lines += ["", "🧩 KRİTER GEÇİŞ DÖKÜMÜ:"]
+            status_str = str(getattr(state, "status", "")).split(".")[-1].upper()
+            signal = state.signal_label or state.signal_direction
+            lines.append(f"  Pipeline    : {status_str}")
+            lines.append(f"  Sinyal      : {signal or 'YOK'}")
+
+            # Kompozit vs CEO eşiği
+            conf = get_oracle_config_cached()
+            min_comp = float(getattr(conf.ceo, "min_composite_score", 0.65))
+            comp = float(state.composite_score or 0.0)
+            comp_ok = comp >= min_comp
+            lines.append(
+                f"  Kompozit    : %{comp*100:.1f} {'✅ GEÇTİ' if comp_ok else '❌ YETERSİZ'} "
+                f"(eşik %{min_comp*100:.0f})"
+            )
+            lines.append(
+                f"  CEO Onay    : {'✅ ONAYLI' if state.ceo_approved else '❌ ONAY YOK'}"
+                + (f" — {state.ceo_revision_reason}" if state.ceo_revision_reason else "")
+            )
+            rt_status = "✅ GEÇTİ" if state.red_team_passed else (
+                "❌ REDDEDİLDİ" if state.red_team_verdict else "⚪ BEKLEMEDE"
+            )
+            lines.append(f"  Red Team    : {rt_status}")
+            if state.red_team_objections:
+                for obj in state.red_team_objections[:3]:
+                    lines.append(f"      ⚠️ {obj[:120]}")
+            if state.cross_asset_warnings:
+                lines.append("  Makro uyarı :")
+                for w in state.cross_asset_warnings[:4]:
+                    lines.append(f"      ⚠️ {w[:120]}")
+            if state.fatal_error:
+                lines.append(f"  ❌ FATAL     : {state.fatal_error[:200]}")
+
             lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             await progress.edit_text("\n".join(lines), disable_web_page_preview=True)
         except Exception as exc:

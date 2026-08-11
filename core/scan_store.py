@@ -210,6 +210,65 @@ class ScanStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def _compare_runs_sync(self, run_a: str, run_b: str) -> dict[str, Any]:
+        """
+        ADIM 5 — İki tarama koşusunu sembol bazında karşılaştırır.
+        Aynı sembol iki koşuda da sinyal ürettiyse sinyal DEĞİŞİMİ raporlanır;
+        biri sinyal üretip diğeri üretmediyse KAYIP/YENİ olarak işaretlenir.
+        Bu, kullanıcının gördüğü "sinyal kayboldu" şikayetini ölçülebilir kılar:
+        kaç sembol tutarlı, kaç sembol değişti, kaç sembol kayboldu/yeni çıktı.
+        """
+        rows_a = self._get_results_sync(run_a)
+        rows_b = self._get_results_sync(run_b)
+        by_a = {r["symbol"]: r for r in rows_a}
+        by_b = {r["symbol"]: r for r in rows_b}
+
+        consistent: list[dict[str, Any]] = []
+        changed: list[dict[str, Any]] = []
+        lost: list[str] = []
+        new: list[str] = []
+
+        for sym, ra in by_a.items():
+            rb = by_b.get(sym)
+            if rb is None:
+                lost.append(sym)
+                continue
+            if ra.get("signal") == rb.get("signal"):
+                consistent.append(
+                    {
+                        "symbol": sym,
+                        "signal": ra.get("signal"),
+                        "composite_a": ra.get("composite"),
+                        "composite_b": rb.get("composite"),
+                    }
+                )
+            else:
+                changed.append(
+                    {
+                        "symbol": sym,
+                        "signal_a": ra.get("signal"),
+                        "signal_b": rb.get("signal"),
+                        "composite_a": ra.get("composite"),
+                        "composite_b": rb.get("composite"),
+                    }
+                )
+        for sym in by_b:
+            if sym not in by_a:
+                new.append(sym)
+
+        return {
+            "run_a": run_a,
+            "run_b": run_b,
+            "consistent_count": len(consistent),
+            "changed_count": len(changed),
+            "lost_count": len(lost),
+            "new_count": len(new),
+            "consistent": consistent,
+            "changed": changed,
+            "lost": lost,
+            "new": new,
+        }
+
     # ── Async sarmalayıcılar ──────────────────────────────────────────────────
     async def record_regime(self, snap: RegimeSnapshot) -> None:
         try:
@@ -265,6 +324,10 @@ class ScanStore:
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[SCAN_STORE] sonuçlar okunamadı: {exc}")
             return []
+
+    async def compare_runs(self, run_a: str, run_b: str) -> dict[str, Any]:
+        """ADIM 5 — iki koşu arası sembol bazlı sinyal tutarlılık raporu."""
+        return await asyncio.to_thread(self._compare_runs_sync, run_a, run_b)
 
 
 # ── Modül seviyesi singleton + yardımcılar ────────────────────────────────────

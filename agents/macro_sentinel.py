@@ -194,14 +194,6 @@ def _compute_macro_score_0_100(
     return round(max(0.0, min(100.0, score)), 2), notes
 
 
-def _compute_usdt_dominance_trend(usdt_d_now: float | None, usdt_d_prev: float | None) -> str:
-    """Gerçek USDT dominance trendi: iki farklı zaman dilimindeki değerden hesaplanır."""
-    if usdt_d_now is None or usdt_d_prev is None:
-        return "UNKNOWN"
-    delta = usdt_d_now - usdt_d_prev
-    return _trend_label(delta)
-
-
 def _compute_cross_score_crypto(
     usdt_d: float | None, usdt_d_trend: str,
     btc_d: float | None, btc_change_7d: float,
@@ -389,68 +381,109 @@ async def run_macro_sentinel(state: OracleState) -> OracleState:
 
     try:
         is_crypto_flag = is_crypto(state.symbol)
-        bundle = await fetch_macro_bundle()
-        dxy_ext = await fetch_stock_macro_data("DXY", period="1mo", interval="1d")
-        us10y_df = await fetch_stock_macro_data("^TNX", period="1mo", interval="1d")
-        gold_df = await fetch_stock_macro_data("GC=F", period="1mo", interval="1d")
+
+        # ── K0 ÖNCELİKLİ MAKRO VERİ (Adım 2 — tekilleştirme) ───────────────
+        # KATMAN 0 (rejim motoru) global verileri tüm evren için BİR KEZ çekti
+        # ve 1800s TTL ile önbelleğe aldı. Burada önce o snapshot'ı okuyoruz;
+        # eksik kalan tek veriyi indiriyoruz. Böylece 6 derin aday için
+        # CoinGecko/takvim/DXY-1mo gibi çağrılar tekrarlanmaz.
+        from core.regime_engine import RegimeSnapshot, get_regime_snapshot
+
+        snap = await get_regime_snapshot()  # force YOK → önbellekten okur
+        s: RegimeSnapshot | None = snap  # noqa: F841 — tip ipucu okunabilirlik
+
+        bundle = await fetch_macro_bundle()  # VIX serisi için (K0 ile aynı key → cache hit)
+        dxy_ext: pd.DataFrame | None = None
+        us10y_df: pd.DataFrame | None = None
+        gold_df: pd.DataFrame | None = None
+        if s is None or s.dxy_change_5d is None:
+            dxy_ext = await fetch_stock_macro_data("DXY", period="1mo", interval="1d")
+        if s is None or s.us10y is None:
+            us10y_df = await fetch_stock_macro_data("^TNX", period="1mo", interval="1d")
+        if s is None or s.gold_change_5d is None:
+            gold_df = await fetch_stock_macro_data("GC=F", period="1mo", interval="1d")
 
         warnings: list[str] = []
 
-        # Dominance verileri: yalnızca kripto için çekilir ve kullanılır
+        # Dominance verileri: önce K0 snapshot; yoksa CoinGecko tek çekim.
         btc_d: float | None = None
         usdt_d: float | None = None
-        usdt_d_prev: float | None = None
+        usdt_d_trend: str = "UNKNOWN"
         total_market_cap: float | None = None
         critical_dominance_outage = False
 
         if is_crypto_flag:
-            try:
-                cg_global = await _fetch_coingecko_global()
-                usdt_d = float(cg_global.get("market_cap_percentage", {}).get("usdt", 0.0))
-                btc_d = float(cg_global.get("market_cap_percentage", {}).get("btc", 0.0))
-                total_market_cap = float(cg_global.get("total_market_cap", {}).get("usd", 0.0))
-                # USDT.D trend için önceki değer proxy (CoinGecko tarihsel API key gerektirir)
-                usdt_d_prev = usdt_d * 0.97 if usdt_d else None
-            except Exception as exc:
-                logger.warning(f"CoinGecko başarısız: {exc}. yfinance proxy devreye giriyor.")
+            if s is not None and s.usdt_d is not None and s.btc_d is not None:
+                # K0 zaten CoinGecko /global çekti — tekrar HTTP yok.
+                usdt_d = s.usdt_d
+                btc_d = s.btc_d
+                total_market_cap = s.total_market_cap
+                # Tarihçe ücretsiz API'de olmadığından snapshot FLAT işaretler;
+                # sahte "0.97x proxy" (her zaman RISING) KALDIRILDI.
+                usdt_d_trend = s.dominance.usdt_d_trend.get("1d", "UNKNOWN")
+            else:
                 try:
-                    dominance_data = await asyncio.to_thread(_get_dominance_via_yfinance_sync)
-                    btc_d = dominance_data.get("btc_dominance")
-                    usdt_d = dominance_data.get("usdt_dominance")
-                    total_market_cap = dominance_data.get("total_market_cap")
-                    if dominance_data.get("warning"):
-                        warnings.append(str(dominance_data["warning"]))
-                except Exception as exc2:
-                    logger.error(f"yfinance proxy da başarısız: {exc2}")
-                    critical_dominance_outage = True
-                    warnings.append("KRİTİK: BTC.D ve USDT.D verileri alınamadı (CoinGecko + yfinance başarısız)")
+                    cg_global = await _fetch_coingecko_global()
+                    usdt_d = float(cg_global.get("market_cap_percentage", {}).get("usdt", 0.0))
+                    btc_d = float(cg_global.get("market_cap_percentage", {}).get("btc", 0.0))
+                    total_market_cap = float(cg_global.get("total_market_cap", {}).get("usd", 0.0))
+                except Exception as exc:
+                    logger.warning(f"CoinGecko başarısız: {exc}. yfinance proxy devreye giriyor.")
+                    try:
+                        dominance_data = await asyncio.to_thread(_get_dominance_via_yfinance_sync)
+                        btc_d = dominance_data.get("btc_dominance")
+                        usdt_d = dominance_data.get("usdt_dominance")
+                        total_market_cap = dominance_data.get("total_market_cap")
+                        if dominance_data.get("warning"):
+                            warnings.append(str(dominance_data["warning"]))
+                    except Exception as exc2:
+                        logger.error(f"yfinance proxy da başarısız: {exc2}")
+                        critical_dominance_outage = True
+                        warnings.append("KRİTİK: BTC.D ve USDT.D verileri alınamadı (CoinGecko + yfinance başarısız)")
 
         dxy_df = bundle["DXY"]
         vix_df = bundle["VIX"]
         spy_df = bundle["SPY"]
 
-        try:
-            calendar_data = await _fetch_economic_calendar()
-            econ_events_today = _check_high_impact_events_today(calendar_data)
-            if econ_events_today:
-                event_str = " | ".join(econ_events_today[:3])
-                warnings.append(
-                    f"[EKONOMİK TAKVİM] YÜKSEK ETKİLİ VERİ GÜNÜ: {event_str} "
-                    "— Bugün büyük pozisyon almaktan kaçının!"
-                )
-                agent_print("MACRO_SENTINEL", f"⚠️ Ekonomik Takvim: {event_str}", BLUE)
-        except Exception as ec_exc:
-            logger.warning(f"[MACRO] Ekonomik takvim işleme hatası: {ec_exc}")
+        # Ekonomik takvim: K0 snapshot öncelikli (başarıyla çekildiyse).
+        econ_events_today: list[str] = []
+        if s is not None and s.source_flags.get("econ_calendar") == "ok":
+            econ_events_today = list(s.econ_events_today or [])
+        else:
+            try:
+                calendar_data = await _fetch_economic_calendar()
+                econ_events_today = _check_high_impact_events_today(calendar_data)
+            except Exception as ec_exc:
+                logger.warning(f"[MACRO] Ekonomik takvim işleme hatası: {ec_exc}")
+        if econ_events_today:
+            event_str = " | ".join(econ_events_today[:3])
+            warnings.append(
+                f"[EKONOMİK TAKVİM] YÜKSEK ETKİLİ VERİ GÜNÜ: {event_str} "
+                "— Bugün büyük pozisyon almaktan kaçının!"
+            )
+            agent_print("MACRO_SENTINEL", f"⚠️ Ekonomik Takvim: {event_str}", BLUE)
 
-        dxy_chg = pct_change_over(dxy_df, bars=5)
-        vix_chg = pct_change_over(vix_df, bars=5)
-        spy_chg = pct_change_over(spy_df, bars=5)
-        vix_level = float(vix_df["close"].iloc[-1])
-        dxy_price = float(dxy_df["close"].iloc[-1])
-        us10y = float(us10y_df["close"].iloc[-1])
-        us10y_delta_7d = pct_change_over(us10y_df, bars=5)
-        dxy_delta_7d = pct_change_over(dxy_ext, bars=5)
-        gold_change_7d = pct_change_over(gold_df, bars=5)
+        # Değerler: K0 snapshot'ta varsa onu kullan (tek çekim, tutarlı),
+        # yoksa seriden hesapla (tek başına /oracle çalışması).
+        dxy_chg = s.dxy_change_5d if (s is not None and s.dxy_change_5d is not None) else pct_change_over(dxy_df, bars=5)
+        vix_chg = pct_change_over(vix_df, bars=5)  # seri gerekli — snapshot'ta yok
+        spy_chg = s.spy_change_5d if (s is not None and s.spy_change_5d is not None) else pct_change_over(spy_df, bars=5)
+        vix_level = s.vix if (s is not None and s.vix is not None) else float(vix_df["close"].iloc[-1])
+        dxy_price = s.dxy if (s is not None and s.dxy is not None) else float(dxy_df["close"].iloc[-1])
+        if s is not None and s.us10y is not None:
+            us10y = s.us10y
+            us10y_delta_7d = s.us10y_delta_7d if s.us10y_delta_7d is not None else 0.0
+        else:
+            us10y = float(us10y_df["close"].iloc[-1])
+            us10y_delta_7d = pct_change_over(us10y_df, bars=5)
+        if s is not None and s.dxy_change_5d is not None:
+            dxy_delta_7d = s.dxy_change_5d
+        else:
+            dxy_delta_7d = pct_change_over(dxy_ext, bars=5)
+        if s is not None and s.gold_change_5d is not None:
+            gold_change_7d = s.gold_change_5d
+        else:
+            gold_change_7d = pct_change_over(gold_df, bars=5)
         dxy_trend = _trend_label(dxy_delta_7d)
         us10y_trend = _trend_label(us10y_delta_7d)
 
@@ -471,14 +504,16 @@ async def run_macro_sentinel(state: OracleState) -> OracleState:
 
         btc_change_7d = 0.0
         if is_crypto_flag:
-            try:
-                btc_df = await fetch_stock_macro_data("BTC-USD", period="1mo", interval="1d")
-                btc_change_7d = pct_change_over(btc_df, bars=5)
-            except Exception:
-                pass
+            if s is not None and s.btc_change_7d is not None:
+                btc_change_7d = s.btc_change_7d
+            else:
+                try:
+                    btc_df = await fetch_stock_macro_data("BTC-USD", period="1mo", interval="1d")
+                    btc_change_7d = pct_change_over(btc_df, bars=5)
+                except Exception:
+                    pass
 
         is_altcoin = is_crypto_flag and not state.symbol.upper().startswith("BTC/")
-        usdt_d_trend = _compute_usdt_dominance_trend(usdt_d, usdt_d_prev)
 
         if is_crypto_flag:
             cross_asset_score, confidence_modifier = _compute_cross_score_crypto(

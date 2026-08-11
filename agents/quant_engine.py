@@ -530,7 +530,16 @@ def _compute_tf_indicators(df: pd.DataFrame) -> dict[str, Any]:
     # ── CHoCH ve RSI Trendline Break Analizi ────────────────────────────────
     choch_result = _detect_choch(df_local, lookback=20)
     rsi_trendline = _detect_rsi_trendline_break(df_local, rsi_period=14)
-    
+
+    # ── TEKNİK ANALİZ EKSİKSİZLİĞİ (FASE E) ────────────────────────────────
+    # Kullanıcı isteği: hem fiyat grafiği hem RSI grafiği üzerinde eksiksiz analiz.
+    # Her zaman dilimi için: salınım-pivot divergence + fiyat trendline kırılımı
+    # + RSI trendline kırılımı + RSI hook — hepsi artık MTF matrisine giriyor.
+    pivot_div = _detect_pivot_divergence(df_local)
+    price_break = _detect_price_breakout(df_local)
+    rsi_break = _detect_rsi_breakout(df_local)
+    rsi_hook_detected = _detect_rsi_hook(df_local)
+
     # Market structure'ı CHoCH ile güçlendir
     market_structure = _detect_market_structure(df_local, lookback=20)
     if choch_result['choch_detected']:
@@ -561,6 +570,13 @@ def _compute_tf_indicators(df: pd.DataFrame) -> dict[str, Any]:
         "choch_break_level": choch_result['break_level'],
         "rsi_trendline_break": rsi_trendline['trendline_break'],
         "rsi_break_direction": rsi_trendline['break_direction'],
+        # ── FASE E: yeni teknik analiz alanları (her TF için) ──
+        "divergence": pivot_div.get("divergence", "NONE"),
+        "divergence_type": pivot_div.get("divergence_type", ""),
+        "divergence_strength": pivot_div.get("strength", "NONE"),
+        "price_breakout": bool(price_break),
+        "rsi_breakout": bool(rsi_break),
+        "rsi_hook": bool(rsi_hook_detected),
     }
 
 
@@ -756,6 +772,118 @@ def _detect_divergence(df: pd.DataFrame, pivot: int = 14) -> str:
     if price_now > price_prev and rsi_now < rsi_prev:
         return "NEGATIVE_DIVERGENCE"
     return "NONE"
+
+
+def _find_pivot_indices(arr: np.ndarray, kind: str, window: int = 5) -> list[int]:
+    """
+    Fraktal pivot bulucu: `arr[i]`, sol/sağ `window` barın max'ı (high) ya da
+    min'i (low) ise i'yi pivot olarak işaretler. (CHoCH pivot mantığıyla tutarlı)
+    """
+    out: list[int] = []
+    n = len(arr)
+    for i in range(window, n - window):
+        left = arr[i - window : i]
+        right = arr[i + 1 : i + 1 + window]
+        if kind == "high":
+            if arr[i] >= left.max() and arr[i] >= right.max() and arr[i] > arr[i - 1] and arr[i] > arr[i + 1]:
+                out.append(i)
+        else:
+            if arr[i] <= left.min() and arr[i] <= right.min() and arr[i] < arr[i - 1] and arr[i] < arr[i + 1]:
+                out.append(i)
+    return out
+
+
+def _detect_pivot_divergence(
+    df: pd.DataFrame,
+    pivot_window: int = 5,
+    rsi_period: int = 14,
+) -> dict[str, Any]:
+    """
+    GERÇEK SALINIM (SWING) PIVOT TABANLI RSI Divergence tespiti.
+
+    Kullanıcı isteği: "fiyat daha düşük dip yaparken RSI daha yüksek dip yapıyorsa
+    boğa; fiyat daha yüksek tepe yaparken RSI daha düşük tepe yapıyorsa ayı".
+
+    Düzenli (regular) — trend dönüşü:
+      - BULLISH : fiyat LOWER LOW  + RSI HIGHER LOW
+      - BEARISH : fiyat HIGHER HIGH + RSI LOWER HIGH
+    Gizli (hidden) — trend devamı:
+      - BULLISH : fiyat HIGHER LOW + RSI LOWER LOW
+      - BEARISH : fiyat LOWER HIGH + RSI HIGHER HIGH
+
+    Dönen dict: divergence, divergence_type, strength, rsi_pivot_delta,
+    price_pivot_delta, last_pivot_age (bar sayısı — tazelik kontrolü).
+    """
+    none_result: dict[str, Any] = {
+        "divergence": "NONE",
+        "divergence_type": "",
+        "strength": "NONE",
+        "rsi_pivot_delta": 0.0,
+        "price_pivot_delta": 0.0,
+        "last_pivot_age": 999,
+    }
+    if df is None or len(df) < pivot_window * 2 + rsi_period + 4:
+        return none_result
+    try:
+        close = df["close"].astype(float)
+        rsi_series = ta.rsi(close, length=rsi_period)
+        if rsi_series is None or rsi_series.dropna().empty:
+            return none_result
+        rsi_series = rsi_series.dropna()
+        n = len(rsi_series)
+        if n < pivot_window * 2 + 4:
+            return none_result
+
+        # RSI dropna() baştaki NaN'leri kırptığı için close'u aynı uzunlukta hizala
+        close_arr = close.iloc[-n:].to_numpy(dtype=float)
+        rsi_arr = rsi_series.to_numpy(dtype=float)
+
+        price_lows = _find_pivot_indices(close_arr, "low", pivot_window)
+        price_highs = _find_pivot_indices(close_arr, "high", pivot_window)
+
+        def _eval(kind: str) -> dict[str, Any] | None:
+            pivots = price_lows if kind == "low" else price_highs
+            if len(pivots) < 2:
+                return None
+            i1, i2 = pivots[-2], pivots[-1]
+            price_delta = close_arr[i2] - close_arr[i1]
+            rsi_delta = rsi_arr[i2] - rsi_arr[i1]
+            last_pivot_age = n - 1 - i2
+            if kind == "low":
+                if price_delta < 0 and rsi_delta > 0:
+                    return {"divergence": "POSITIVE_DIVERGENCE", "divergence_type": "regular_bullish", "rsi_pivot_delta": rsi_delta, "price_pivot_delta": price_delta, "last_pivot_age": last_pivot_age}
+                if price_delta > 0 and rsi_delta < 0:
+                    return {"divergence": "HIDDEN_BULLISH_DIVERGENCE", "divergence_type": "hidden_bullish", "rsi_pivot_delta": rsi_delta, "price_pivot_delta": price_delta, "last_pivot_age": last_pivot_age}
+            else:
+                if price_delta > 0 and rsi_delta < 0:
+                    return {"divergence": "NEGATIVE_DIVERGENCE", "divergence_type": "regular_bearish", "rsi_pivot_delta": rsi_delta, "price_pivot_delta": price_delta, "last_pivot_age": last_pivot_age}
+                if price_delta < 0 and rsi_delta > 0:
+                    return {"divergence": "HIDDEN_BEARISH_DIVERGENCE", "divergence_type": "hidden_bearish", "rsi_pivot_delta": rsi_delta, "price_pivot_delta": price_delta, "last_pivot_age": last_pivot_age}
+            return None
+
+        # Öncelik: düzenli (dönüş) sinyalleri; yoksa gizli (devam) sinyalleri
+        result: dict[str, Any] | None = None
+        for kind in ("low", "high"):
+            r = _eval(kind)
+            if r and r["divergence"].startswith(("POSITIVE", "NEGATIVE")):
+                result = r
+                break
+            if result is None and r:
+                result = r
+        if result is None:
+            return none_result
+
+        abs_rsi = abs(float(result["rsi_pivot_delta"]))
+        if abs_rsi >= 4.0:
+            strength = "STRONG"
+        elif abs_rsi >= 2.0:
+            strength = "MODERATE"
+        else:
+            strength = "WEAK"
+        result["strength"] = strength
+        return result
+    except Exception:
+        return none_result
 
 
 def find_historical_levels(df: pd.DataFrame, lookback_days: int = 500, threshold: float = 0.02) -> tuple[list[float], bool]:

@@ -55,7 +55,7 @@ _DATA_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
 
 _CACHE_TTL_SEC = int(os.getenv("ORACLE_DATA_CACHE_TTL_SEC", "900"))
 # ── RAM KORUMASI (Render 512MB): LRU boyut limiti — en eski girişler atılır ──
-_CACHE_MAX_ENTRIES = int(os.getenv("ORACLE_DATA_CACHE_MAX_ENTRIES", "40"))
+_CACHE_MAX_ENTRIES = int(os.getenv("ORACLE_DATA_CACHE_MAX_ENTRIES", "300"))
 
 
 def build_ssl_context(verify: bool | None = None) -> ssl.SSLContext:
