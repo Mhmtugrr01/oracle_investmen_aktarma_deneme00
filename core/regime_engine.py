@@ -45,6 +45,25 @@ from tools.market_data import (
 logger = logging.getLogger(__name__)
 
 COINGECKO_API = "https://api.coingecko.com/api/v3"
+COINPAPRIKA_API = "https://api.coinpaprika.com/v1"
+
+# ── CoinGecko rate-limit koruması (FAZ 0) ────────────────────────────────────
+# Ücretsiz API ~10-30 istek/dk sınırına sahiptir; 429 almamak için tüm
+# çağrılar arasında minimum aralık uygulanır. Testler bu değişkeni 0'a çekebilir.
+_COINGECKO_MIN_INTERVAL_SEC = 2.5
+_coingecko_lock = asyncio.Lock()
+_coingecko_last_call: float = 0.0
+
+
+async def _coingecko_rate_limit() -> None:
+    """CoinGecko çağrıları arasında min. aralık uygular (global, lock korumalı)."""
+    global _coingecko_last_call
+    async with _coingecko_lock:
+        elapsed = time.time() - _coingecko_last_call
+        if _coingecko_last_call and elapsed < _COINGECKO_MIN_INTERVAL_SEC:
+            await asyncio.sleep(_COINGECKO_MIN_INTERVAL_SEC - elapsed)
+        _coingecko_last_call = time.time()
+
 
 # ── Çoklu zaman dilimi listesi (proje standardı) ─────────────────────────────
 MTF_TIMEFRAMES: tuple[str, ...] = ("5m", "15m", "1h", "4h", "1d", "1w")
@@ -108,15 +127,25 @@ class RegimeSnapshot:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def _coingecko_get_json(path: str, timeout_sec: int = 15) -> Any | None:
-    """CoinGecko GET — sertifika fallback'li, 1 retry'li. Hata => None."""
+    """CoinGecko GET — rate-limit + SSL fallback + 429 beklemesi. Hata => None."""
     url = f"{COINGECKO_API}/{path}"
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
     attempts = [(True, False), (False, False), (True, True)]  # (verify, retry)
-    for verify, _retry in attempts:
+    for attempt_idx, (verify, _retry) in enumerate(attempts):
+        # FAZ 0: her çağrı arasında min. aralık (429 önleme)
+        await _coingecko_rate_limit()
         try:
             connector = aiohttp.TCPConnector(ssl=build_ssl_context(verify))
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
                 async with session.get(url) as resp:
+                    if resp.status == 429:
+                        # Rate limit vuruldu: uzun bekleme + bir kez daha dene
+                        logger.warning(
+                            f"[REGIME] CoinGecko {path} HTTP 429 (rate limit) — "
+                            f"5s beklenip yeniden deneniyor (deneme {attempt_idx + 1}/{len(attempts)})"
+                        )
+                        await asyncio.sleep(5.0)
+                        raise RuntimeError(f"CoinGecko {path} HTTP 429")
                     if resp.status != 200:
                         raise RuntimeError(f"CoinGecko {path} HTTP {resp.status}")
                     return await resp.json()
@@ -214,6 +243,69 @@ async def _fetch_btc_d_mtf() -> DominanceMTF:
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[REGIME] BTC.D MTF hesabı başarısız: {exc}")
     return mtf
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  FAZ 0 — COINGECKO BAŞARISIZSA YFINANCE FALLBACK (USDT.D / BTC.D / mcap)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def _fetch_dominance_via_yfinance() -> dict:
+    """
+    CoinGecko tamamen erişilemezse yfinance üzerinden proxy:
+      - BTC.D: BTC-USD / (BTC-USD + ETH-USD) oranı (kaba proxy, % değil yön)
+      - USDT.D: USDT-USD ~1.00 sabit olduğundan mutlak % doğrulanamaz → None
+        döner; yön trendi (FLAT) ayrıca işaretlenir.
+      - total_market_cap: BTC-USD * 19.7M (tahmini, sadece büyüklük sınıfı)
+    Dönüş anahtarları: btc_d, usdt_d, usdt_d_trend, total_market_cap, warning
+    """
+    try:
+        df = await fetch_stock_macro_data("BTC-USD", period="3mo", interval="1d")
+        usdt_df = await fetch_stock_macro_data("USDT-USD", period="3mo", interval="1d")
+        if df is None or df.empty or usdt_df is None or usdt_df.empty:
+            raise ValueError("yfinance BTC-USD / USDT-USD boş döndü")
+
+        btc_close = float(df["close"].iloc[-1])
+        if btc_close <= 0:
+            raise ValueError("yfinance fiyat değeri geçersiz")
+
+        # BTC.D yön proxy'si: BTC-USD güç trendi (mutlak % değil, yön göstergesi)
+        btc_series = [float(c) for c in df["close"].tolist()]
+        btc_trend = _trend_from_ema(btc_series, fast=2, slow=5)
+        btc_d_proxy = 50.0 + (5.0 if btc_trend == "RISING" else -5.0 if btc_trend == "FALLING" else 0.0)
+
+        # USDT.D: USDT-USD depeg yoksa nötr (FLAT), değer None (yanlış tetikleme önlenir)
+        usdt_d_trend = "FLAT"
+        try:
+            usdt_series = [float(c) for c in usdt_df["close"].tolist()]
+            usdt_last = usdt_series[-1] if usdt_series else 1.0
+            if abs(usdt_last - 1.0) > 0.002:
+                usdt_d_trend = "RISING" if usdt_last > 1.0 else "FALLING"
+        except Exception:  # noqa: BLE001
+            pass
+
+        total_cap_est = btc_close * 19_700_000.0
+
+        return {
+            "btc_d": round(btc_d_proxy, 2),
+            "usdt_d": None,
+            "usdt_d_trend": usdt_d_trend,
+            "total_market_cap": float(total_cap_est),
+            "source": "yfinance_proxy",
+            "warning": (
+                "CoinGecko erişilemedi — BTC.D yfinance yön proxy'si ile hesaplandı, "
+                "USDT.D nötr kabul edildi (mutlak % doğrulanamadı)"
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[REGIME] yfinance dominans fallback başarısız: {exc}")
+        return {
+            "btc_d": None,
+            "usdt_d": None,
+            "usdt_d_trend": "UNKNOWN",
+            "total_market_cap": None,
+            "source": "unavailable",
+            "warning": "CoinGecko ve yfinance dominans verisi alınamadı",
+        }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -578,7 +670,7 @@ class RegimeSnapshotProvider:
                 except Exception as exc:  # noqa: BLE001
                     snap.source_flags[f"yf_{key}"] = f"fail:{exc}"
 
-            # ── Dominans / likidite (CoinGecko) ──────────────────────────────
+            # ── Dominans / likidite (CoinGecko, FAZ 0: yfinance fallback) ────
             cg_global = await _coingecko_get_json("global")
             if isinstance(cg_global, dict):
                 data = cg_global.get("data", cg_global)
@@ -588,6 +680,22 @@ class RegimeSnapshotProvider:
                 snap.source_flags["coingecko_global"] = "ok"
             else:
                 snap.source_flags["coingecko_global"] = "fail"
+                # FAZ 0: CoinGecko erişilemedi → yfinance yön proxy'si
+                yf_dom = await _fetch_dominance_via_yfinance()
+                if yf_dom.get("btc_d") is not None:
+                    snap.btc_d = float(yf_dom["btc_d"])
+                    snap.usdt_d = float(yf_dom["usdt_d"]) if yf_dom.get("usdt_d") is not None else None
+                    snap.total_market_cap = yf_dom.get("total_market_cap")
+                    snap.source_flags["coingecko_global"] = "yfinance_proxy"
+                    # USDT.D nötr trend işaretle (Faz C tüketicileri yön bilgisini kullanır)
+                    usdt_trend_fb = str(yf_dom.get("usdt_d_trend", "FLAT"))
+                    snap.dominance.usdt_d["1d"] = snap.dominance.usdt_d.get("1d", []) or []
+                    snap.dominance.usdt_d_trend["1d"] = usdt_trend_fb
+                    snap.dominance.source = "yfinance_proxy"
+                    if yf_dom.get("warning"):
+                        snap.warnings.append(str(yf_dom["warning"]))
+                else:
+                    snap.warnings.append("CoinGecko ve yfinance dominans verisi alınamadı")
 
             # ── BTC.D çoklu zaman dilimi ─────────────────────────────────────
             snap.dominance = await _fetch_btc_d_mtf()

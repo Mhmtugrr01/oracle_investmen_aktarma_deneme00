@@ -120,7 +120,8 @@ def get_performance_stats() -> dict:
     conn.close()
     
     total_closed = wins + losses
-    win_rate = (wins / total_closed) * 100.0 if total_closed > 0 else 58.71 
+    # FAZ 4 KURALI: Kapalı trade yoksa win-rate 0.0 olur — kurgusal/sabit yüzde ASLA yazılmaz.
+    win_rate = (wins / total_closed) * 100.0 if total_closed > 0 else 0.0
     return {
         "win_rate": round(win_rate, 2),
         "wins": wins, "losses": losses, "active_count": active_count,

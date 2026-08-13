@@ -75,10 +75,6 @@ class QuantScoreConfig(BaseModel):
     rsi_overbought_penalty: float
     rsi_bullish_zone_bonus: float
     rsi_bearish_zone_penalty: float
-    cross_golden_bonus: float
-    cross_bullish_bonus: float
-    cross_bearish_penalty: float
-    cross_death_penalty: float
     divergence_bullish_bonus: float
     divergence_bearish_penalty: float
     fib_proximity_bonus: float

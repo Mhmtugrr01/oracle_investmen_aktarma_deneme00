@@ -48,52 +48,6 @@ def calculate_rsi(df: pd.DataFrame, period: int = 14) -> dict[str, Any]:
     }
 
 
-def ma_ema_cross(
-    df: pd.DataFrame,
-    fast_period: int = 9,
-    slow_period: int = 21,
-    ema: bool = True,
-) -> dict[str, Any]:
-    """MA veya EMA kesisim (golden/death cross) analizi."""
-    if len(df) < slow_period + 2:
-        raise ValueError("MA/EMA cross icin yetersiz veri.")
-
-    close = df["close"]
-    if ema:
-        fast = ta.ema(close, length=fast_period)
-        slow = ta.ema(close, length=slow_period)
-        kind = "EMA"
-    else:
-        fast = ta.sma(close, length=fast_period)
-        slow = ta.sma(close, length=slow_period)
-        kind = "SMA"
-
-    if fast is None or slow is None:
-        raise ValueError(f"{kind} hesaplanamadi.")
-
-    f_now, f_prev = float(fast.iloc[-1]), float(fast.iloc[-2])
-    s_now, s_prev = float(slow.iloc[-1]), float(slow.iloc[-2])
-
-    if f_prev <= s_prev and f_now > s_now:
-        signal = "golden_cross"
-    elif f_prev >= s_prev and f_now < s_now:
-        signal = "death_cross"
-    elif f_now > s_now:
-        signal = "bullish"
-    else:
-        signal = "bearish"
-
-    return {
-        "signal": signal,
-        "fast": round(f_now, 6),
-        "slow": round(s_now, 6),
-        "fast_period": fast_period,
-        "slow_period": slow_period,
-        "type": kind,
-        "spread_pct": round(((f_now - s_now) / s_now) * 100, 4) if s_now else 0.0,
-    }
-
-
 def _find_pivots(series: pd.Series, window: int, mode: str) -> list[tuple[int, float]]:
     values = series.values
     pivots: list[tuple[int, float]] = []
@@ -234,64 +188,6 @@ def nearest_fib_level(
     nearest_price = core[nearest_key]
     dist_pct = abs(price - nearest_price) / price * 100 if price else 0.0
     return nearest_key, nearest_price, round(dist_pct, 4)
-
-
-def build_quant_score(
-    rsi: dict[str, Any],
-    cross: dict[str, Any],
-    divergence: dict[str, Any],
-    fib_proximity_pct: float,
-    atr_rr: float,
-    score_params: dict[str, float],
-    fib_proximity_threshold_pct: float,
-) -> tuple[float, list[str]]:
-    """
-    0-100 arasi teknik skor uretir.
-    50 = notr, >50 bullish, <50 bearish.
-    """
-    score = 50.0
-    notes: list[str] = []
-
-    if rsi["oversold"]:
-        score += score_params["rsi_oversold_bonus"]
-        notes.append(f"RSI oversold ({rsi['rsi']})")
-    elif rsi["overbought"]:
-        score -= score_params["rsi_overbought_penalty"]
-        notes.append(f"RSI overbought ({rsi['rsi']})")
-    elif rsi["zone"] == "bullish":
-        score += score_params["rsi_bullish_zone_bonus"]
-    elif rsi["zone"] == "bearish":
-        score -= score_params["rsi_bearish_zone_penalty"]
-
-    cross_map = {
-        "golden_cross": score_params["cross_golden_bonus"],
-        "bullish": score_params["cross_bullish_bonus"],
-        "bearish": -score_params["cross_bearish_penalty"],
-        "death_cross": -score_params["cross_death_penalty"],
-    }
-    delta = float(cross_map.get(cross["signal"], 0.0))
-    score += delta
-    notes.append(f"{cross['type']} {cross['signal']} ({delta:+.1f})")
-
-    if divergence["bullish"]:
-        score += score_params["divergence_bullish_bonus"]
-        notes.append("RSI bullish divergence")
-    elif divergence["bearish"]:
-        score -= score_params["divergence_bearish_penalty"]
-        notes.append("RSI bearish divergence")
-
-    if fib_proximity_pct < fib_proximity_threshold_pct:
-        score += score_params["fib_proximity_bonus"]
-        notes.append(f"Fib yakini (%{fib_proximity_pct})")
-
-    if atr_rr >= score_params["atr_rr_high_threshold"]:
-        score += score_params["atr_rr_bonus"]
-        notes.append(f"ATR R:R={atr_rr}")
-    elif atr_rr < score_params["atr_rr_low_threshold"]:
-        score -= score_params["atr_rr_penalty"]
-        notes.append(f"Dusuk ATR R:R={atr_rr}")
-
-    return round(float(np.clip(score, 0, 100)), 2), notes
 
 
 def normalized_from_score(score_0_100: float) -> float:

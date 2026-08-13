@@ -118,17 +118,18 @@ async def run_the_oracle(state: OracleState) -> OracleState:
     )
     low_confidence = _actual_conf < (effective_confidence_threshold - 1e-9)
 
-    # ── Gri Bölge: 0.65-0.70 arası = "Piyasa Kararsız" — net sinyal değil ────────
+    # ── Gri Bölge: eşik ile eşik+0.05 arası = "Piyasa Kararsız" — net sinyal değil
     # Yüksek R:R (>6.0) sinyal gri bölgeyi geçebilir.
+    grey_ceiling = ceo_conf.min_composite_score + 0.05
     in_grey_zone = (
-        ceo_conf.min_composite_score <= composite <= 0.70
+        ceo_conf.min_composite_score <= composite <= grey_ceiling
         and (base_rr or 0.0) < 6.0
         and not low_composite
     )
     if in_grey_zone:
         grey_reason = (
-            f"• Gri Bölge (Kararsız Piyasa): Kompozit skor (%{composite*100:.0f}) netlik eşiğinin (%57) altında. "
-            "Net kırılım bekleniyor — işlem yapılmadı."
+            f"• Gri Bölge (Kararsız Piyasa): Kompozit skor (%{composite*100:.0f}) netlik eşiğinin "
+            f"(%{grey_ceiling*100:.0f}) altında. Net kırılım bekleniyor — işlem yapılmadı."
         )
         reason_parts = [grey_reason]
         reason = "\n".join(reason_parts)
@@ -150,10 +151,11 @@ async def run_the_oracle(state: OracleState) -> OracleState:
         "[EKONOMİK TAKVİM]" in m and "YÜKSEK" in m
         for m in state.messages
     )
-    if high_impact_event_today and composite < 0.70:
+    econ_ceiling = ceo_conf.min_composite_score + 0.13
+    if high_impact_event_today and composite < econ_ceiling:
         econ_reason = (
             f"• Ekonomik Takvim Engeli: Bugün yüksek etkili makro veri açıklaması var. "
-            f"Kritik veri günlerinde kompozit eşiği %70'e yükseltildi. "
+            f"Kritik veri günlerinde kompozit eşiği %{econ_ceiling*100:.0f}'e yükseltildi. "
             f"Mevcut kompozit (%{composite*100:.0f}) bu eşiği geçemiyor."
         )
         return state.model_copy(

@@ -20,7 +20,7 @@ try:
 except ImportError:
     _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 
-from core.console import BLUE, CYAN, agent_print
+from core.console import BLUE, CYAN, RED, agent_print
 from core.types import AgentNode, OracleState, PipelineStatus
 
 _NEWS_CACHE: dict[str, tuple[float, dict]] = {}
@@ -215,6 +215,53 @@ async def _fetch_crypto_fundamentals(symbol: str) -> dict:
         return {"fundamental_boost": 0.0, "error": str(exc)}
 
 
+# ── FAZ 2: FUNDAMENTAL = SADECE VETO (red-team savcısı) ──────────────────────
+# Pozitif haber/CMC verisi kompozite KATKI YAPMAZ (nötr 0.0).
+# Yalnızca güçlü negatif sinyal (risk < -0.30) işlemi veto eder (ABORT).
+# Saf fonksiyon — test edilebilir, ağ gerektirmez.
+_VETO_THRESHOLD = -0.30
+
+
+def _apply_fundamental_veto(
+    news_score: float, cmc_boost: float, article_count: int
+) -> dict:
+    """Ham haber+CMC skorunu veto mantığına göre işler.
+
+    Dönüş: {"score": float, "vetoed": bool, "veto_reason": str|None,
+            "note": str, "confidence": float}
+    """
+    raw = (float(news_score) * 0.70) + (float(cmc_boost) * 0.30)
+    raw = max(-1.0, min(1.0, raw))
+    confidence = min(max(article_count, 0) / 10.0, 1.0)
+
+    if raw >= 0.0:
+        return {
+            "score": 0.0,
+            "vetoed": False,
+            "veto_reason": None,
+            "note": "pozitif skor nötrleştirildi (sadece veto rolü)",
+            "confidence": confidence,
+        }
+    if raw < _VETO_THRESHOLD:
+        return {
+            "score": raw,
+            "vetoed": True,
+            "veto_reason": (
+                f"• Fundamental Veto: Haber/tokenomics riski kritik seviyede "
+                f"(fundamental skor {raw:.2f}). Risk < {_VETO_THRESHOLD:.2f} → işlem engellendi."
+            ),
+            "note": None,
+            "confidence": confidence,
+        }
+    return {
+        "score": raw,
+        "vetoed": False,
+        "veto_reason": None,
+        "note": "hafif negatif — kompozit üzerinde sınırlı baskı",
+        "confidence": confidence,
+    }
+
+
 async def run_fundamental_filter(state: OracleState) -> OracleState:
     agent_print(
         "FUNDAMENTAL_MINER",
@@ -249,20 +296,39 @@ async def run_fundamental_filter(state: OracleState) -> OracleState:
     cmc_boost = float(cmc_data.get("fundamental_boost", 0.0) or 0.0)
     article_count = int(news_data.get("article_count", 0) or 0)
 
-    fundamental_score = (news_score * 0.70) + (cmc_boost * 0.30)
-    fundamental_score = max(-1.0, min(1.0, fundamental_score))
+    veto = _apply_fundamental_veto(news_score, cmc_boost, article_count)
+    fundamental_score = veto["score"]
+    veto_note = veto["note"]
+    data_confidence = veto["confidence"]
 
-    data_confidence = min(article_count / 10.0, 1.0)
+    if veto["vetoed"]:
+        veto_reason = veto["veto_reason"]
+        agent_print("FUNDAMENTAL_MINER", veto_reason, RED)
+        return state.model_copy(
+            update={
+                "current_node": AgentNode.FUNDAMENTAL_FILTER,
+                "status": PipelineStatus.ABORTED,
+                "fatal_error": veto_reason,
+                "fundamental_score": fundamental_score,
+                "fundamental_data_confidence": data_confidence,
+                "news_article_count": article_count,
+                "news_sentiment": news_score,
+                "messages": [
+                    f"[FUNDAMENTAL_MINER] VETO score={fundamental_score:+.3f} "
+                    f"news={news_score:+.3f} cmc={cmc_boost:+.3f} articles={article_count}"
+                ],
+            }
+        )
 
     logger.info(
         f"[FUNDAMENTAL] {symbol} -> haber={article_count} adet, "
         f"news_score={news_score:.3f}, cmc_boost={cmc_boost:.3f}, "
-        f"fundamental_score={fundamental_score:.3f}, guven={data_confidence:.2f}"
+        f"fundamental_score={fundamental_score:.3f} ({veto_note}), guven={data_confidence:.2f}"
     )
 
     agent_print(
         "FUNDAMENTAL_MINER",
-        f"Tokenomics + haber akışı -> fundamental_score={fundamental_score:+.3f}",
+        f"Tokenomics + haber akışı -> fundamental_score={fundamental_score:+.3f} ({veto_note})",
         BLUE,
     )
     agent_print(

@@ -431,7 +431,6 @@ def format_oracle_response(state: OracleState) -> str:
         validity_lines.append(f"İptal seviyesi: {inv:.4f}")
     else:
         validity_lines.append("Giriş bölgesi içinde kaldığı sürece geçerli")
-    validity_lines.append("⏱️ Referans süre: ~24-72 saat (ort. sinyal çözülme süresi)")
     validity_block = "\n".join(validity_lines)
 
     entry = _format_price(state.entry_price)

@@ -220,16 +220,16 @@ class OracleState(BaseModel):
         except Exception:
             config_weights = {
                 "macro": 0.15,
-                "quant": 0.40,
+                "quant": 0.60,
                 "whale": 0.10,
-                "fundamental": 0.25,
+                "fundamental": 0.05,
                 "sentiment": 0.10,
             }
 
         macro_weight = float(config_weights.get("macro", 0.15))
-        quant_weight = float(config_weights.get("quant", 0.40))
+        quant_weight = float(config_weights.get("quant", 0.60))
         whale_weight = float(config_weights.get("whale", 0.10))
-        fundamental_weight = float(config_weights.get("fundamental", 0.25))
+        fundamental_weight = float(config_weights.get("fundamental", 0.05))
         sentiment_weight = float(config_weights.get("sentiment", 0.10))
 
         macro_component = _to_unit(self.macro_score)

@@ -148,6 +148,10 @@ async def run_social_alpha_catcher(telegram_sender=None, asset_type: str = "cryp
                         logger.error(f"[AGENT_DELTA] Telegram özet gönderilemedi: {tg_exc}")
 
                 # ── 🚀 BÜYÜK MOTOR ENTEGRASYONU (Otonom Sinyal Tetikleyicisi) ──
+                # ⚠️ FAZ 2 KURALI: Sosyal/analist istihbaratı yalnızca ADAY KEŞFİ içindir.
+                # Bu ajan skorlara (macro/quant/whale/fundamental/sentiment) ve kompozit
+                # skora HİÇBİR puan/bonus EKLEMEZ. Adaylar aşağıda standart Olympus
+                # pipeline'ına sokulur; onay yalnızca oradaki katı kriterlerle verilir.
                 try:
                     from core.graph import compile_oracle_graph
                 except ImportError:

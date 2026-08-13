@@ -414,6 +414,11 @@ async def fetch_crypto_ohlcv(
     else:
         df = await _fetch_yfinance_ohlcv(symbol, timeframe, limit)
 
+    # FAZ 0 — KAPALI MUM KURALI: Son aktif/oluşmamış mum hesaplamalara KESİNLİKLE dahil edilmez.
+    # Sinyalin taramalar arasında değişmesi/kaybolması bu son mum yüzündendir.
+    if df is not None and len(df) > 1:
+        df = df.iloc[:-1]
+
     if len(df) < 20:
         raise ValueError(f"{symbol} yetersiz bar: {len(df)}")
     _cache_set_df(cache_key, df)
@@ -463,6 +468,9 @@ async def fetch_stock_macro_data(
         
     logger.debug(f"yfinance download: {yahoo_ticker} period={period}")
     df = await asyncio.to_thread(_download_yfinance, yahoo_ticker, period, interval)
+    # FAZ 0 — KAPALI MUM KURALI: Son aktif mum hesaplamalara dahil edilmez.
+    if df is not None and len(df) > 1:
+        df = df.iloc[:-1]
     _cache_set_df(cache_key, df)
     return df
 

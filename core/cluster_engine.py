@@ -80,10 +80,20 @@ class ClusterEngine:
         Returns:
             SignalCluster listesi (her küme bir tema)
         """
+        # FAZ 3/4 — Göreli güç benchmark'ı: kripto kümeleri için BTC getirisi
+        # ("BTC düşerken en az düşen lider" kuralı).
+        has_crypto = any("/" in str(s) for s in symbols)
+        benchmark_returns: dict[str, float] | None = None
+        if has_crypto:
+            benchmark_returns = await self._fetch_benchmark_returns(fetch_close=fetch_close)
+
         if len(symbols) < 2:
             # Tek varlık varsa kümeleme gereksiz
             if symbols:
-                member = await self._score_symbol(symbols[0], lookback_days, fetch_close=fetch_close)
+                member = await self._score_symbol(
+                    symbols[0], lookback_days, fetch_close=fetch_close,
+                    benchmark_returns=benchmark_returns,
+                )
                 return [SignalCluster(
                     cluster_id=0,
                     theme_description=f"Tekil varlık: {symbols[0]}",
@@ -113,6 +123,7 @@ class ClusterEngine:
                 member = await self._score_symbol(
                     sym, lookback_days, fetch_close=fetch_close,
                     pre_fetched=price_data.get(sym),
+                    benchmark_returns=benchmark_returns,
                 )
                 members.append(member)
             
@@ -188,6 +199,58 @@ class ClusterEngine:
         
         return price_data
 
+    async def _fetch_benchmark_returns(
+        self, fetch_close: Any | None = None
+    ) -> dict[str, float] | None:
+        """
+        BTC/USDT benchmark kapanış serisinden 5g/10g/15g getirilerini çek.
+
+        FAZ 3/4 — Göreli güç: "BTC düşerken en az düşen lider" kuralı için
+        benchmark. BTC çekilemezse None döner (skorlama kendi momentumuna düşer).
+        """
+        close: pd.Series | None = None
+        for bsym in ("BTC/USDT", "BTC-USD"):
+            # 1) Enjekte edilmiş veri kaynağı (scanner market_data cache'i)
+            if fetch_close is not None:
+                try:
+                    df = await fetch_close(bsym)
+                    if df is not None and not df.empty:
+                        close = (
+                            df["Close"].dropna() if "Close" in df.columns
+                            else (df["close"].dropna() if "close" in df.columns else df.iloc[:, 0].dropna())
+                        )
+                        if close is not None and len(close) >= 15:
+                            break
+                        close = None
+                except Exception:
+                    close = None
+            # 2) yfinance fallback
+            try:
+                data = await asyncio.to_thread(
+                    yf.download, bsym, period="60d", interval="1d",
+                    progress=False, auto_adjust=True,
+                )
+                if data is not None and not data.empty:
+                    close = data["Close"].dropna()
+                    if isinstance(close, pd.DataFrame):
+                        close = close.iloc[:, 0]
+                    if close is not None and len(close) >= 15:
+                        break
+                    close = None
+            except Exception:
+                close = None
+
+        if close is None or len(close) < 15:
+            return None
+
+        vals = close.astype(float)
+
+        def _ret(n: int) -> float:
+            base = float(vals.iloc[-n])
+            return (float(vals.iloc[-1]) / base - 1.0) * 100.0 if base > 0 else 0.0
+
+        return {"5d": _ret(5), "10d": _ret(10), "15d": _ret(15)}
+
     def _compute_correlation_matrix(
         self, price_data: dict[str, pd.Series]
     ) -> pd.DataFrame:
@@ -243,10 +306,11 @@ class ClusterEngine:
         days: int,
         fetch_close: Any | None = None,
         pre_fetched: pd.Series | None = None,
+        benchmark_returns: dict[str, float] | None = None,
     ) -> ClusterMember:
         """
         Bir varlık için 4 faktörlü skor hesapla:
-        1. Relative Strength (küme ortalamasına göre güç)
+        1. Relative Strength (BTC'ye göre göreli güç — benchmark varsa)
         2. Volume Momentum (hacim artışı)
         3. Signal Clarity (teknik sinyal netliği)
         4. Liquidity (USD hacmi)
@@ -284,10 +348,16 @@ class ClusterEngine:
             if len(close) < 10:
                 return self._default_member(symbol)
             
-            # 1. Relative Strength: Son 5-10 barın % değişimi
+            # 1. Relative Strength: Son 5-10 barın % değişimi (BTC'ye göre, benchmark varsa)
             returns_5d = (float(close.iloc[-1]) / float(close.iloc[-5]) - 1) * 100
             returns_10d = (float(close.iloc[-1]) / float(close.iloc[-10]) - 1) * 100
-            rs_raw = (returns_5d * 0.6 + returns_10d * 0.4)  # 0-100 arası normalize edilecek
+            if benchmark_returns is not None:
+                # FAZ 3/4: BTC düşerken en az düşen = en yüksek göreli güç (beta/güç rasyosu)
+                rel_5d = returns_5d - float(benchmark_returns.get("5d", 0.0))
+                rel_10d = returns_10d - float(benchmark_returns.get("10d", 0.0))
+                rs_raw = (rel_5d * 0.6 + rel_10d * 0.4)
+            else:
+                rs_raw = (returns_5d * 0.6 + returns_10d * 0.4)  # benchmark yoksa kendi momentumu
             
             # 2. Volume Momentum: Son 5 bar / Önceki 5 bar ortalama hacim
             if volume is not None and len(volume) >= 10:

@@ -299,6 +299,142 @@ def _detect_choch(df: pd.DataFrame, lookback: int = 20) -> dict[str, Any]:
     }
 
 
+def _detect_liquidity_sweep(df: pd.DataFrame, lookback: int = 30, pivot_window: int = 3) -> dict[str, Any]:
+    """FAZ 5 — Likidite Süpürmesi (Sweep) tespiti.
+
+    Pivot high/low seviyeleri üstüne/altına FITİL ile geçip GÖVDE ile geri dönüş,
+    likiditeyi süpürdüğünü (stop-hunt) gösterir. Bu, trendin tersine dönüşünde
+    güçlü bir erken sinyaldir.
+
+    Returns:
+        dict: {
+            'sweep_detected': bool,
+            'direction': 'BULLISH' | 'BEARISH' | 'NONE',
+            'swept_level': float,
+            'strength': 'STRONG' | 'MODERATE' | 'WEAK'
+        }
+    """
+    if df is None or len(df) < lookback + 4:
+        return {"sweep_detected": False, "direction": "NONE", "swept_level": 0.0, "strength": "WEAK"}
+
+    recent = df.tail(lookback).copy()
+    highs = recent["high"].values
+    lows = recent["low"].values
+    closes = recent["close"].values
+    opens = recent["open"].values
+
+    # Pivot high/low: pivot_window'lu yerel uç noktalar
+    pivot_highs: list[tuple[int, float]] = []
+    pivot_lows: list[tuple[int, float]] = []
+    for i in range(pivot_window, len(highs) - pivot_window):
+        window_high = highs[i - pivot_window:i + pivot_window + 1]
+        if highs[i] == window_high.max() and window_high.max() > window_high[pivot_window - 1]:
+            pivot_highs.append((i, highs[i]))
+        window_low = lows[i - pivot_window:i + pivot_window + 1]
+        if lows[i] == window_low.min() and window_low.min() < window_low[pivot_window - 1]:
+            pivot_lows.append((i, lows[i]))
+
+    if not pivot_highs and not pivot_lows:
+        return {"sweep_detected": False, "direction": "NONE", "swept_level": 0.0, "strength": "WEAK"}
+
+    last_close = closes[-1]
+    last_open = opens[-1]
+    last_high = highs[-1]
+    last_low = lows[-1]
+
+    sweep_detected = False
+    direction = "NONE"
+    swept_level = 0.0
+    strength = "WEAK"
+
+    # BEARISH SWEEP: Son pivot low ALTINA fitil indi, gövde ile geri kapandı (long stop-hunt)
+    if pivot_lows:
+        last_pivot_low = pivot_lows[-1][1]
+        if last_low < last_pivot_low and last_close > last_pivot_low and last_close > last_open:
+            sweep_detected = True
+            direction = "BULLISH"  # yön: süpürme sonrası yukarı dönüş
+            swept_level = last_pivot_low
+            # Fitil derinliği: güç ölçütü
+            wick_depth = (last_pivot_low - last_low) / last_pivot_low
+            strength = "STRONG" if wick_depth > 0.005 else "MODERATE"
+
+    # BULLISH SWEEP: Son pivot high ÜSTÜNE fitil çıktı, gövde ile geri kapandı (short stop-hunt)
+    if not sweep_detected and pivot_highs:
+        last_pivot_high = pivot_highs[-1][1]
+        if last_high > last_pivot_high and last_close < last_pivot_high and last_close < last_open:
+            sweep_detected = True
+            direction = "BEARISH"  # yön: süpürme sonrası aşağı dönüş
+            swept_level = last_pivot_high
+            wick_depth = (last_high - last_pivot_high) / last_pivot_high
+            strength = "STRONG" if wick_depth > 0.005 else "MODERATE"
+
+    return {
+        "sweep_detected": sweep_detected,
+        "direction": direction,
+        "swept_level": round(swept_level, 6),
+        "strength": strength,
+    }
+
+
+def _detect_fvg(df: pd.DataFrame, lookback: int = 30) -> dict[str, Any]:
+    """FAZ 5 — Fair Value Gap (FVG / imbalanced candle) tespiti.
+
+    3 mum yapısı: [yüksek mum] [düşük mum] — ortadaki mumun boşluğu
+    (gap) yüksek mumun üst fitili ile düşük mumun alt fitili arasındaysa
+    FVG oluşur. Fiyat bu boşluğa dönme eğilimindedir (fill).
+
+    Returns:
+        dict: {
+            'fvg_detected': bool,
+            'direction': 'BULLISH' | 'BEARISH' | 'NONE',
+            'fvg_top': float,
+            'fvg_bottom': float,
+            'fill_pct': float  (0.0-1.0, mevcut fiyatın boşlukta nerede olduğu)
+        }
+    """
+    if df is None or len(df) < 3:
+        return {"fvg_detected": False, "direction": "NONE", "fvg_top": 0.0, "fvg_bottom": 0.0, "fill_pct": 0.0}
+
+    recent = df.tail(lookback).copy()
+    highs = recent["high"].values
+    lows = recent["low"].values
+    closes = recent["close"].values
+
+    # En son oluşan FVG'yi bul (geriye doğru tara)
+    # i >= 2 olmalı: mum[i-2], mum[i-1], mum[i] üçlüsü gerekir
+    for i in range(len(highs) - 1, 1, -1):
+        # Bullish FVG: mum[i-2] yüksek, mum[i-1] düşük, mum[i] yüksek
+        # gap: lows[i-2] (önceki mumun altı) ile highs[i] (sonraki mumun üstü) arası
+        # Bullish FVG: lows[i] > highs[i-2] → boşluk
+        if lows[i] > highs[i - 2]:
+            fvg_top = lows[i]
+            fvg_bottom = highs[i - 2]
+            direction = "BULLISH"
+            break
+        # Bearish FVG: highs[i] < lows[i-2] → boşluk
+        if highs[i] < lows[i - 2]:
+            fvg_top = lows[i - 2]
+            fvg_bottom = highs[i]
+            direction = "BEARISH"
+            break
+    else:
+        return {"fvg_detected": False, "direction": "NONE", "fvg_top": 0.0, "fvg_bottom": 0.0, "fill_pct": 0.0}
+
+    price = closes[-1]
+    span = fvg_top - fvg_bottom
+    fill_pct = 0.0
+    if span > 1e-12:
+        fill_pct = float(np.clip((price - fvg_bottom) / span, 0.0, 1.0))
+
+    return {
+        "fvg_detected": True,
+        "direction": direction,
+        "fvg_top": round(fvg_top, 6),
+        "fvg_bottom": round(fvg_bottom, 6),
+        "fill_pct": round(fill_pct, 4),
+    }
+
+
 def _detect_rsi_trendline_break(df: pd.DataFrame, rsi_period: int = 14, pivot_window: int = 5) -> dict[str, Any]:
     """
     RSI Trendline Break tespiti — RSI'ın kendi düşen/yükselen trend çizgisini kırması.
@@ -531,6 +667,10 @@ def _compute_tf_indicators(df: pd.DataFrame) -> dict[str, Any]:
     choch_result = _detect_choch(df_local, lookback=20)
     rsi_trendline = _detect_rsi_trendline_break(df_local, rsi_period=14)
 
+    # ── FAZ 5: Likidite Süpürmesi + FVG (fiyat davranışı tamamlayıcıları) ───
+    sweep_result = _detect_liquidity_sweep(df_local)
+    fvg_result = _detect_fvg(df_local)
+
     # ── TEKNİK ANALİZ EKSİKSİZLİĞİ (FASE E) ────────────────────────────────
     # Kullanıcı isteği: hem fiyat grafiği hem RSI grafiği üzerinde eksiksiz analiz.
     # Her zaman dilimi için: salınım-pivot divergence + fiyat trendline kırılımı
@@ -577,6 +717,16 @@ def _compute_tf_indicators(df: pd.DataFrame) -> dict[str, Any]:
         "price_breakout": bool(price_break),
         "rsi_breakout": bool(rsi_break),
         "rsi_hook": bool(rsi_hook_detected),
+        # ── FAZ 5: sweep + FVG ──
+        "liquidity_sweep": bool(sweep_result.get("sweep_detected", False)),
+        "sweep_direction": sweep_result.get("direction", "NONE"),
+        "sweep_strength": sweep_result.get("strength", "WEAK"),
+        "sweep_level": sweep_result.get("swept_level", 0.0),
+        "fvg_detected": bool(fvg_result.get("fvg_detected", False)),
+        "fvg_direction": fvg_result.get("direction", "NONE"),
+        "fvg_top": fvg_result.get("fvg_top", 0.0),
+        "fvg_bottom": fvg_result.get("fvg_bottom", 0.0),
+        "fvg_fill_pct": fvg_result.get("fill_pct", 0.0),
     }
 
 
@@ -716,26 +866,42 @@ def _decide_trade_type(
     h1_bias: str, 
     price_breakout: bool, 
     rsi_breakout: bool,
-    rsi_hook: bool
+    rsi_hook: bool,
+    choch_direction: str = "NONE",
+    sweep_direction: str = "NONE",
+    fvg_direction: str = "NONE",
 ) -> str:
     # ── 🛡️ MULTI-TIMEFRAME CONFLUENCE & TRENDLINE BREAKOUT REFORM (R06) ──
     all_biases = [weekly_bias, daily_bias, h4_bias, h1_bias]
     oversold_count = sum(1 for b in all_biases if b == "OVERSOLD")
-    
+
+    # ── FAZ 3: Likidite Süpürmesi + CHOCH + FVG yapısal teyidi ────────────
+    # LONG:  likidite aşağı süpürüldü (sweep BULLISH) + GÖVDELİ CHOCH yukarı kırılım + bullish FVG
+    # SHORT: ayna kural (sweep BEARISH + BEARISH CHOCH + bearish FVG).
+    smart_money_long = (
+        (sweep_direction == "BULLISH" and choch_direction == "BULLISH")
+        or (choch_direction == "BULLISH" and fvg_direction == "BULLISH")
+    )
+    smart_money_short = (
+        (sweep_direction == "BEARISH" and choch_direction == "BEARISH")
+        or (choch_direction == "BEARISH" and fvg_direction == "BEARISH")
+    )
+
     # Haftalık grafik Bearish (Trend Aşağı) ise alt zaman dilimlerindeki ham alımları KİLİTLE!
-    # Sadece ve sadece fiyatta, RSI'da kırılım VEYA RSI Hook (çukurdan dönüş) geldiyse oyuna gir!
+    # Sadece ve sadece fiyatta, RSI'da kırılım VEYA RSI Hook VEYA yapısal (sweep+CHOCH) kırılım geldiyse oyuna gir!
     has_breakout = price_breakout or rsi_breakout or rsi_hook
-    
+    long_confirmed = has_breakout or smart_money_long
+
     # 3 veya daha fazla zaman dilimi oversold + kırılım varsa bu jenerasyonel bir fırsattır!
-    if oversold_count >= 3 and has_breakout:
+    if oversold_count >= 3 and long_confirmed:
         return "STRONG_LONG_TERM_ENTRY"
         
     # Günlük grafik oversold ama henüz ne düşen kırılımı ne de RSI Hook var: ALMA, Pusuya yat! (COIN Tuzağı Kalkanı)
-    if daily_bias == "OVERSOLD" and not has_breakout:
+    if daily_bias == "OVERSOLD" and not long_confirmed:
         return "AVOID_CONFLICTING_SIGNALS"
 
     # Günlük grafik oversold olmuş VEYA trend dönüşü teyit edilmiş + düşen trend kırılmışsa/RSI hook varsa: AL!
-    if (daily_bias in ["OVERSOLD", "BULLISH"] or oversold_count >= 1) and has_breakout:
+    if (daily_bias in ["OVERSOLD", "BULLISH"] or oversold_count >= 1) and long_confirmed:
         if weekly_bias == "BEARISH":
             return "SHORT_TERM_BOUNCE_ONLY" # Haftalık düşerken günlük kırılım = tepki alımı
         return "ACCUMULATE_ZONE" # Haftalık yön yukarı/nötr ise güvenli toplama alanı
@@ -748,7 +914,8 @@ def _decide_trade_type(
     if weekly_bias == "BULLISH" and daily_bias in ["NEUTRAL", "OVERBOUGHT"]:
         return "REDUCE_EXPOSURE"
 
-    if weekly_bias == "BEARISH" and daily_bias == "BEARISH":
+    # SHORT yönü: yapısal kırılım (sweep + bearish CHOCH) kısa sinyalini teyit eder.
+    if weekly_bias == "BEARISH" and (daily_bias == "BEARISH" or smart_money_short):
         return "STRONG_SELL_OR_SHORT"
 
     return "AVOID_CONFLICTING_SIGNALS"
@@ -1377,11 +1544,21 @@ async def run_quant_engine(state: OracleState) -> OracleState:
         price_breakout = _detect_price_breakout(df_local)
         rsi_breakout = _detect_rsi_breakout(df_local)
         rsi_hook = _detect_rsi_hook(df_local)
-        
+
+        # ── FAZ 3: CHOCH / Sweep / FVG (4h birincil, 1d yedek) ─────────────
+        h4_metrics = tf_metrics.get("4h", {})
+        d1_metrics = tf_metrics.get("1d", {})
+        choch_direction = str(h4_metrics.get("choch_direction") or d1_metrics.get("choch_direction") or "NONE")
+        sweep_direction = str(h4_metrics.get("sweep_direction") or d1_metrics.get("sweep_direction") or "NONE")
+        fvg_direction = str(h4_metrics.get("fvg_direction") or d1_metrics.get("fvg_direction") or "NONE")
+
         trade_type = _decide_trade_type(
             weekly_bias, daily_bias, h4_bias, h1_bias,
             price_breakout=price_breakout, rsi_breakout=rsi_breakout,
-            rsi_hook=rsi_hook
+            rsi_hook=rsi_hook,
+            choch_direction=choch_direction,
+            sweep_direction=sweep_direction,
+            fvg_direction=fvg_direction,
         )
 
         divergence_daily = _detect_divergence(tf_dfs["1d"], pivot=14) if len(tf_dfs["1d"]) >= 20 else "NONE"
@@ -1395,6 +1572,35 @@ async def run_quant_engine(state: OracleState) -> OracleState:
             divergence_bonus += 0.12
         elif "NEGATIVE" in divergence_daily or "NEGATIVE" in divergence_h4:
             divergence_bonus -= 0.12
+
+        # ── FAZ 3: Sweep + CHOCH + FVG yapısal teyit bonusu (skora tam entegre) ──
+        smart_money_long = (
+            (sweep_direction == "BULLISH" and choch_direction == "BULLISH")
+            or (choch_direction == "BULLISH" and fvg_direction == "BULLISH")
+        )
+        smart_money_short = (
+            (sweep_direction == "BEARISH" and choch_direction == "BEARISH")
+            or (choch_direction == "BEARISH" and fvg_direction == "BEARISH")
+        )
+        if smart_money_long:
+            divergence_bonus += 0.10
+        elif smart_money_short:
+            divergence_bonus -= 0.10
+
+        # ── FAZ 3: USDT.D korelasyonu — düşüş altcoin LONG'unu onaylar ──────
+        cross_warns = list(getattr(state, "cross_asset_warnings", None) or [])
+        usdt_d_falling = any("USDT.D DÜŞÜYOR" in str(w) for w in cross_warns)
+        usdt_d_rising = any("USDT.D YÜKSELİYOR" in str(w) for w in cross_warns)
+        long_trade_types = {
+            "ACCUMULATE_ZONE",
+            "STRONG_LONG_TERM_ENTRY",
+            "SHORT_TERM_BOUNCE_ONLY",
+        }
+        if is_crypto(state.symbol) and trade_type in long_trade_types:
+            if usdt_d_falling:
+                divergence_bonus += 0.05  # likidite kriptoya dönüyor → LONG onayı
+            elif usdt_d_rising:
+                divergence_bonus -= 0.05  # nakde kaçış → LONG baskısı
 
         technical_unit = _technical_unit_from_timeframes(tf_metrics, divergence_bonus)
         quant_score = normalized_from_score(technical_unit * 100.0)

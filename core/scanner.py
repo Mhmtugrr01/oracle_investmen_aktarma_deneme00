@@ -629,6 +629,8 @@ class OracleScanner:
         # FAZ B: önceki koşunun küme haritalarını sıfırla (bayat veri sızması olmasın)
         self._cluster_rank_map = {}
         self._cluster_theme_map = {}
+        # FAZ 3: bu koşudaki eleme nedenleri (her aday için)
+        self._elimination_log: list[dict] = []
         store = get_scan_store()
         started = time.monotonic()
         try:
@@ -747,9 +749,11 @@ class OracleScanner:
                         logger.error(
                             f"[SCANNER] {asset} pipeline timeout ({per_asset_timeout}s) — atlandı."
                         )
+                        self._log_elimination(asset, f"pipeline timeout ({per_asset_timeout}s)")
                         continue
                     except Exception as exc:
                         logger.error(f"[SCANNER FAIL-SAFE] {asset} pipeline hatası: {exc}")
+                        self._log_elimination(asset, f"pipeline hatası: {str(exc)[:80]}")
                         continue
                     finally:
                         self._scan_progress["scanned"] += 1
@@ -786,6 +790,7 @@ class OracleScanner:
 
             # ── KATMAN 3: TESLİMAT (Digest v2) ──────────────────────────────
             await self._send_opportunity_digest(opportunities, regime)
+            await self._send_elimination_summary(self._elimination_log, len(candidates))
             status = "done" if opportunities else "empty"
             await store.finish_run(run_id, status, len(candidates), len(opportunities))
             self._last_full_scan = datetime.now(timezone.utc)
@@ -932,10 +937,15 @@ class OracleScanner:
     async def _scan_single_asset(
         self, asset: str, category: str, selection_reason: Optional[str] = None
     ) -> Optional[dict]:
+        def _log_elimination(reason: str) -> None:
+            """FAZ 3: eleme nedenini koşu loguna ekle (kapasite sınırlı)."""
+            self._log_elimination(asset, reason)
+
         try:
             state = await self.pipeline(asset)
             state_data = self._pipeline_state_to_dict(state)
             if not state_data:
+                _log_elimination("pipeline state boş döndü")
                 return None
 
             signal = state_data.get("signal_label") or state_data.get("signal")
@@ -944,6 +954,10 @@ class OracleScanner:
             # EGER ISLEM ORACLE/CEO TARAFINDAN IPTAL (ABORT) EDILDIYSE ASLA LISTEYE YAZMA!
             status_str = str(state_data.get("status", "")).upper()
             if "ABORT" in status_str or "FAIL" in status_str or state_data.get("fatal_error"):
+                fe = str(state_data.get("fatal_error") or "").strip()
+                _log_elimination(
+                    f"CEO/ajan vetosu: {fe[:90]}" if fe else f"durum: {status_str}"
+                )
                 return None
 
             if signal in ["STRONG_BUY", "ACCUMULATE", "STRONG_SELL", "SHORT", "REDUCE", "LONG_FIRSAT", "SHORT_FIRSAT"]:
@@ -1015,10 +1029,29 @@ class OracleScanner:
                     "category": category,
                 }
 
+            # FAZ 3: sinyal üretilmedi — eleme nedenini açıkla
+            if signal:
+                _log_elimination(f"sinyal eşiği: {signal} (kompozit {composite*100:.0f}%)")
+            else:
+                _log_elimination(f"sinyal üretilmedi (kompozit {composite*100:.0f}%)")
+
             return None
         except Exception as exc:
             logger.warning(f"[SCANNER] {asset} pipeline hatası: {exc}")
+            _log_elimination(f"beklenmeyen hata: {str(exc)[:80]}")
             return None
+
+    def _log_elimination(self, asset: str, reason: str) -> None:
+        """FAZ 3 — Eleme nedenini koşu loguna ekle (kapasite sınırlı)."""
+        try:
+            log = getattr(self, "_elimination_log", None)
+            if log is None:
+                return
+            if len(log) >= 40:
+                return
+            log.append({"asset": asset, "reason": reason})
+        except Exception:
+            pass
 
     async def _watchlist_monitor_loop(self):
         interval_min = self.scan_config.get("watchlist_check_interval_min", 15)
@@ -1196,6 +1229,69 @@ class OracleScanner:
             f"\n⏱ Rapor: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
             " | Detay: /oracle <symbol>"
         )
+
+        await self.bot("\n".join(lines))
+
+    async def _send_elimination_summary(self, eliminations: list, candidates_total: int):
+        """FAZ 3 — ELEME RAPORU: adayların neden elendiğini şeffaf biçimde özetler.
+
+        Amaç: "Neden 0 fırsat?" sorusuna net cevap. Her derin analize giren adayın
+        hangi eşikte elendiği (CEO veto, kompozit, R:R, sinyal yok, timeout vb.)
+        Telegram'da kısa ve okunabilir bir özet olarak paylaşılır.
+        """
+        if not eliminations:
+            return
+
+        # Nedenlere göre grupla (aynı nedeni tek satırda topla)
+        from collections import Counter
+
+        counter = Counter()
+        by_asset: dict[str, str] = {}
+        for item in eliminations:
+            asset = str(item.get("asset", "?"))
+            reason = str(item.get("reason", "")).strip()
+            # Veto mesajlarını kategorize et
+            upper = reason.upper()
+            if "VETO" in upper:
+                cat = "🛑 Fundamental / CEO veto"
+            elif "GRİ" in upper or "GREY" in upper or "GRI" in upper:
+                cat = "⚪ Gri bölge (kararsız piyasa)"
+            elif "KOMPOZİT" in upper or "KOMPOZIT" in upper or "PUAN" in upper:
+                cat = "📉 Kompozit skor eşiği altı"
+            elif "R:R" in upper or "RISK/ÖDÜL" in upper or "RR" in upper:
+                cat = "📐 R:R eşiği altı"
+            elif "GÜVEN" in upper or "CONFIDENCE" in upper or "GUVEN" in upper:
+                cat = "🔒 Güven eşiği altı"
+            elif "TUTARSIZ" in upper or "VARIANCE" in upper or "SAPMA" in upper:
+                cat = "🔄 Ajan tutarsızlığı (variance)"
+            elif "TIMEOUT" in upper:
+                cat = "⏱ Pipeline timeout"
+            elif "SİNYAL" in upper or "SINYAL" in upper:
+                cat = "📡 Sinyal eşiği geçilemedi"
+            elif "HATA" in upper or "FAIL" in upper:
+                cat = "⚠️ Pipeline hatası"
+            else:
+                cat = "❓ Diğer eleme"
+            counter[cat] += 1
+            if asset not in by_asset:
+                by_asset[asset] = reason
+
+        # En sık tekrarlanan 3 eleme nedenini ilk 3'e koy
+        lines = [f"🧾 ELEME RAPORU — {len(eliminations)}/{candidates_total} aday elendi\n"]
+        top = counter.most_common(3)
+        for cat, count in top:
+            lines.append(f"{cat}: {count}")
+        if len(counter) > 3:
+            for cat, count in counter.most_common()[3:]:
+                lines.append(f"  • {cat}: {count}")
+        lines.append("")
+
+        # Örnek: ilk 3 farklı varlığın spesifik nedenini göster
+        lines.append("🔍 İlk elenenler:")
+        for asset, reason in list(by_asset.items())[:3]:
+            lines.append(f"   • {asset}: {reason[:100]}")
+        if len(by_asset) > 3:
+            lines.append(f"   … ve {len(by_asset) - 3} varlık daha")
 
         await self.bot("\n".join(lines))
 

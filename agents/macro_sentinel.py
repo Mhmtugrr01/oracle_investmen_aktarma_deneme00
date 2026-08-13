@@ -75,10 +75,20 @@ def _check_high_impact_events_today(events: list[dict]) -> list[str]:
 async def _fetch_coingecko_global() -> dict:
     url = "https://api.coingecko.com/api/v3/global"
     timeout = aiohttp.ClientTimeout(total=15)
+    # FAZ 0: CoinGecko çağrıları arasında rate-limit koruması (429 önleme)
+    try:
+        from core.regime_engine import _coingecko_rate_limit
+
+        await _coingecko_rate_limit()
+    except Exception:
+        pass
     try:
         connector = aiohttp.TCPConnector(ssl=build_ssl_context(True))
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             async with session.get(url) as resp:
+                if resp.status == 429:
+                    await asyncio.sleep(5.0)
+                    raise RuntimeError(f"CoinGecko global HTTP {resp.status}")
                 if resp.status != 200:
                     raise RuntimeError(f"CoinGecko global HTTP {resp.status}")
                 data = await resp.json()
@@ -96,47 +106,85 @@ async def _fetch_coingecko_global() -> dict:
 def _get_dominance_via_yfinance_sync() -> dict:
     """
     CoinGecko alternatifi: yfinance üzerinden BTC dominans proxy hesabı.
-    USDT dominansı yfinance ile güvenilir şekilde üretilemediğinden None döner.
+    FAZ 0: USDT-USD fiyatı da çekilir — USDT.D yön göstergesi üretilir
+    (mutlak % değil; RISING/FALLING/FLAT sinyali olarak kullanılır).
     """
-    tickers = yf.download(
-        ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD"],
-        period="1d",
-        interval="1h",
-        progress=False,
-        auto_adjust=True,
-        threads=False,
-    )
-    close = tickers.get("Close")
-    if close is None or close.empty:
-        raise ValueError("yfinance close verisi boş")
+    try:
+        tickers = yf.download(
+            ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD"],
+            period="1d",
+            interval="1h",
+            progress=False,
+            auto_adjust=True,
+            threads=False,
+        )
+        close = tickers.get("Close")
+        if close is None or close.empty:
+            raise ValueError("yfinance close verisi boş")
 
-    latest = close.ffill().iloc[-1]
-    btc_price = float(latest.get("BTC-USD"))
-    eth_price = float(latest.get("ETH-USD"))
-    bnb_price = float(latest.get("BNB-USD"))
-    sol_price = float(latest.get("SOL-USD"))
+        latest = close.ffill().iloc[-1]
+        btc_price = float(latest.get("BTC-USD"))
+        eth_price = float(latest.get("ETH-USD"))
+        bnb_price = float(latest.get("BNB-USD"))
+        sol_price = float(latest.get("SOL-USD"))
 
-    if any(price <= 0 for price in (btc_price, eth_price, bnb_price, sol_price)):
-        raise ValueError("yfinance fiyat verisi geçersiz")
+        if any(price <= 0 for price in (btc_price, eth_price, bnb_price, sol_price)):
+            raise ValueError("yfinance fiyat verisi geçersiz")
 
-    btc_cap = btc_price * 19_700_000
-    eth_cap = eth_price * 120_000_000
-    bnb_cap = bnb_price * 145_000_000
-    sol_cap = sol_price * 465_000_000
+        btc_cap = btc_price * 19_700_000
+        eth_cap = eth_price * 120_000_000
+        bnb_cap = bnb_price * 145_000_000
+        sol_cap = sol_price * 465_000_000
 
-    top4_cap = btc_cap + eth_cap + bnb_cap + sol_cap
-    total_cap_estimate = top4_cap * 1.35
-    if total_cap_estimate <= 0:
-        raise ValueError("toplam cap tahmini oluşturulamadı")
+        top4_cap = btc_cap + eth_cap + bnb_cap + sol_cap
+        total_cap_estimate = top4_cap * 1.35
+        if total_cap_estimate <= 0:
+            raise ValueError("toplam cap tahmini oluşturulamadı")
 
-    btc_dominance = (btc_cap / total_cap_estimate) * 100.0
-    return {
-        "btc_dominance": round(btc_dominance, 2),
-        "usdt_dominance": None,
-        "total_market_cap": float(total_cap_estimate),
-        "source": "yfinance_proxy",
-        "warning": "CoinGecko erişilemedi — BTC.D yfinance proxy ile hesaplandı, USDT.D mevcut değil",
-    }
+        btc_dominance = (btc_cap / total_cap_estimate) * 100.0
+
+        # FAZ 0: USDT.D yön bilgisi — USDT-USD ~1.00 sabit olduğundan mutlak %
+        # yfinance ile doğrulanamaz. Depeg (sapma) yoksa nötr (FLAT) kabul edilir;
+        # değer None kalır ki `usdt_d > 5.5` gibi yanlış tetiklemeler olmasın.
+        usdt_dominance: float | None = None
+        usdt_d_trend = "FLAT"
+        try:
+            usdt_df = yf.download(
+                "USDT-USD",
+                period="1mo",
+                interval="1d",
+                progress=False,
+                auto_adjust=True,
+                threads=False,
+            )
+            if usdt_df is not None and not usdt_df.empty:
+                usdt_close = usdt_df.get("Close")
+                if usdt_close is not None and not usdt_close.dropna().empty:
+                    usdt_series = [float(c) for c in usdt_close.dropna().tolist()]
+                    usdt_last = usdt_series[-1]
+                    if abs(usdt_last - 1.0) > 0.002:
+                        usdt_d_trend = "RISING" if usdt_last > 1.0 else "FALLING"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[MACRO] USDT-USD yfinance çekilemedi: {exc}")
+
+        return {
+            "btc_dominance": round(btc_dominance, 2),
+            "usdt_dominance": usdt_dominance,
+            "usdt_d_trend": usdt_d_trend,
+            "total_market_cap": float(total_cap_estimate),
+            "source": "yfinance_proxy",
+            "warning": "CoinGecko erişilemedi — BTC.D yfinance proxy ile hesaplandı, USDT.D nötr kabul edildi",
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[MACRO] yfinance proxy dominans çekilemedi: {exc}")
+        return {
+            "btc_dominance": 50.0,
+            "usdt_dominance": None,
+            "usdt_d_trend": "FLAT",
+            "total_market_cap": None,
+            "source": "yfinance_proxy_fallback",
+            "warning": "yfinance proxy de başarısız — BTC.D nötr 50.0 kabul edildi",
+        }
 
 
 def _trend_label(delta_pct_7d: float) -> str:
@@ -239,8 +287,14 @@ def _compute_cross_score_crypto(
     base = 70.0 - risk_penalty + reversal_bonus
     base += 2.0 if (total_market_cap or 0.0) > 0 else -2.0
     if usdt_d is None:
-        warnings.append("USDT.D verisi mevcut değil (CoinGecko erişilemedi) — bu analiz eksik")
-        base *= 0.80
+        # FAZ 0: usdt_d_trend biliniyorsa (yfinance proxy devrede) analiz tamamen
+        # eksik sayılmaz — nötr kabul edilir, hafif penalite uygulanır.
+        if usdt_d_trend in ("UNKNOWN", ""):
+            warnings.append("USDT.D verisi mevcut değil (CoinGecko erişilemedi) — bu analiz eksik")
+            base *= 0.80
+        else:
+            warnings.append("USDT.D mutlak değeri alınamadı — yfinance nötr trend ile analiz devam etti")
+            base *= 0.90
     if critical_dominance_outage:
         base = 25.0
         warnings.append("Cross-asset analizi devre dışı — diğer ajanlar çalışmaya devam ediyor")
@@ -434,6 +488,7 @@ async def run_macro_sentinel(state: OracleState) -> OracleState:
                         btc_d = dominance_data.get("btc_dominance")
                         usdt_d = dominance_data.get("usdt_dominance")
                         total_market_cap = dominance_data.get("total_market_cap")
+                        usdt_d_trend = str(dominance_data.get("usdt_d_trend", "FLAT"))
                         if dominance_data.get("warning"):
                             warnings.append(str(dominance_data["warning"]))
                     except Exception as exc2:

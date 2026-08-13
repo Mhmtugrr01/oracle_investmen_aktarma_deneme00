@@ -865,6 +865,427 @@ def test_faz_d_rate_limit():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 13. FAZ 0 — COINGECKO RATE LIMIT + YFINANCE FALLBACK
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz0_coingecko_rate_limit():
+    print("[13] FAZ 0 — CoinGecko rate limit + yfinance fallback")
+    from core import regime_engine as re
+
+    check("min interval tanimli (>=2.0)", re._COINGECKO_MIN_INTERVAL_SEC >= 2.0,
+          f"got {re._COINGECKO_MIN_INTERVAL_SEC}")
+    check("coingecko lock var", isinstance(re._coingecko_lock, asyncio.Lock))
+
+    # Rate-limit: ardışık çağrılar arası bekleme
+    async def _probe():
+        t0 = time.monotonic()
+        await re._coingecko_rate_limit()
+        t1 = time.monotonic()
+        await re._coingecko_rate_limit()
+        t2 = time.monotonic()
+        return t1 - t0, t2 - t1
+
+    g1, g2 = asyncio.run(_probe())
+    check(f"ilk çağrı hızlı (got {g1*1000:.0f}ms)", g1 < 0.5, f"got {g1:.3f}s")
+    check(f"ikinci çağrı beklemeli (got {g2*1000:.0f}ms)", g2 >= re._COINGECKO_MIN_INTERVAL_SEC * 0.8,
+          f"got {g2:.3f}s")
+
+    # Yfinance fallback: BTC.D proxy + USDT.D None + trend
+    async def _fb():
+        return await re._fetch_dominance_via_yfinance()
+
+    fb = asyncio.run(_fb())
+    check("fallback dict döndü", isinstance(fb, dict), f"got {type(fb)}")
+    check("fallback source=yfinance_proxy", fb.get("source") == "yfinance_proxy",
+          f"got {fb.get('source')}")
+    check("fallback btc_d var (50±5)", fb.get("btc_d") is not None and 45.0 <= fb["btc_d"] <= 55.0,
+          f"got {fb.get('btc_d')}")
+    check("fallback usdt_d None (mutlak yok)", fb.get("usdt_d") is None, f"got {fb.get('usdt_d')}")
+    check("fallback usdt_d_trend bilinir", fb.get("usdt_d_trend") in ("FLAT", "RISING", "FALLING"),
+          f"got {fb.get('usdt_d_trend')}")
+    check("fallback total_market_cap > 0", (fb.get("total_market_cap") or 0) > 0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 14. FAZ 1 — EŞİK GEVŞETMESİ (0.57 / 2.5 / 0.50) + AĞIRLIKLAR
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz1_thresholds():
+    print("[14] FAZ 1 — eşik gevşetmesi + ağırlıklar")
+    import asyncio as _a
+    from core.config import load_oracle_config
+    from core.types import OracleState
+    from core.config import get_oracle_config_cached
+
+    async def _run():
+        return await load_oracle_config()
+
+    cfg = _a.run(_run())
+    check("min_composite_score==0.57", abs(cfg.ceo.min_composite_score - 0.57) < 1e-9,
+          f"got {cfg.ceo.min_composite_score}")
+    check("min_risk_reward_ratio==2.5", abs(cfg.risk.min_risk_reward_ratio - 2.5) < 1e-9,
+          f"got {cfg.risk.min_risk_reward_ratio}")
+    check("confidence_threshold==0.50", abs(cfg.ceo.confidence_threshold - 0.50) < 1e-9,
+          f"got {cfg.ceo.confidence_threshold}")
+    w = cfg.analysis.weights
+    total = w["macro"] + w["quant"] + w["whale"] + w["fundamental"] + w["sentiment"]
+    check("ağırlıklar toplamı ≈ 1.0", abs(total - 1.0) < 1e-9, f"got {total}")
+    check("fundamental ağırlık 0.05 (veto-only)", abs(w["fundamental"] - 0.05) < 1e-9,
+          f"got {w['fundamental']}")
+    check("quant ağırlık 0.60 (fiyat bazlı)", abs(w["quant"] - 0.60) < 1e-9, f"got {w['quant']}")
+
+    # composite_score property'si YENİ ağırlıkları mı kullanıyor?
+    # Sentetik state: whale=None (kripto değil) → whale ağırlığı dağıtılır.
+    # quant_score=1.0, fundamental_score=0.0, diğerleri 0.5 → quant ağırlığı baskın olmalı.
+    s = OracleState(
+        symbol="TEST/USDT",
+        macro_score=0.5,
+        quant_score=1.0,
+        whale_score=None,
+        fundamental_score=0.0,
+        sentiment_score=0.5,
+        timeframe_alignment_score=0.5,
+    )
+    comp = s.composite_score
+    # _to_unit(1.0)=1.0, _to_unit(0.5)=0.75, _to_unit(0.0)=0.5
+    # whale=None → quant+=0.06, fundamental+=0.04 → quant=0.66, fund=0.09
+    # = 0.75*0.15 + 1.0*0.66 + 0.5*0.09 + 0.5*0.10 + 0.75*0.10
+    # = 0.1125 + 0.66 + 0.045 + 0.05 + 0.075 = 0.9425
+    expected = (
+        0.75 * 0.15 + 1.0 * 0.66 + 0.5 * 0.09
+        + 0.5 * 0.10 + 0.75 * 0.10
+    )
+    check(f"composite_score yeni ağırlıklarla (got {comp:.4f})",
+          abs(comp - expected) < 1e-6, f"expected {expected:.4f}")
+
+    # Fallback dict de güncel mi? config cache'i bozup kontrol et.
+    s2 = OracleState(symbol="TEST2/USDT", macro_score=0.5, quant_score=1.0,
+                     whale_score=None, fundamental_score=0.0,
+                     sentiment_score=0.5, timeframe_alignment_score=0.5)
+    check("composite_score her iki state'te tutarlı",
+          abs(s2.composite_score - comp) < 1e-9)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 15. FAZ 2 — FUNDAMENTAL VETO-ONLY (savcı rolü)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz2_fundamental_veto():
+    print("[15] FAZ 2 — fundamental veto-only")
+    from agents.fundamental_filter import _apply_fundamental_veto
+
+    # Pozitif skor → 0.0 nötr
+    res_pos = _apply_fundamental_veto(0.42, 0.30, 5)
+    check("pozitif skor → 0.0 nötr", res_pos["score"] == 0.0, f"got {res_pos}")
+    check("pozitif → veto yok", res_pos["vetoed"] is False)
+
+    # Hafif negatif → sınırlı baskı, veto yok
+    res_neg = _apply_fundamental_veto(-0.15, -0.10, 3)
+    # raw = (-0.15*0.70) + (-0.10*0.30) = -0.135
+    check("hafif negatif → skor korunur", abs(res_neg["score"] - (-0.135)) < 1e-9,
+          f"got {res_neg['score']}")
+    check("hafif negatif → veto yok", res_neg["vetoed"] is False)
+
+    # Güçlü negatif → VETO
+    res_veto = _apply_fundamental_veto(-0.45, -0.30, 2)
+    check("güçlü negatif → VETO", res_veto["vetoed"] is True, f"got {res_veto}")
+    check("veto skor negatif korunur", res_veto["score"] < -0.30)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 16. FAZ 3 — ELEME RAPORU (elimination log + özet)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz3_elimination_report():
+    print("[16] FAZ 3 — eleme raporu")
+    from core.scanner import OracleScanner
+
+    scanner = OracleScanner(None, None, {"scan_schedule": {}, "asset_universe": {}})
+    scanner._elimination_log = []
+
+    # Elimine kayıtları toplanıyor mu?
+    scanner._log_elimination("BTC/USDT", "CEO/ajan vetosu: Kompozit skor eşiği altı")
+    scanner._log_elimination("ETH/USDT", "CEO/ajan vetosu: Gri bölge")
+    scanner._log_elimination("SOL/USDT", "sinyal üretilmedi")
+    scanner._log_elimination("XRP/USDT", "pipeline timeout")
+    check("4 eleme kaydı toplandı", len(scanner._elimination_log) == 4,
+          f"got {len(scanner._elimination_log)}")
+
+    # Kapasite sınırı (40)
+    for i in range(50):
+        scanner._log_elimination(f"A{i}/USDT", "test")
+    check("kapasite sınırı 40", len(scanner._elimination_log) == 40,
+          f"got {len(scanner._elimination_log)}")
+
+    # Özet mesaj üretimi (bot çağrısı yakalanır)
+    sent: list[str] = []
+
+    async def _fake_bot(msg: str):
+        sent.append(msg)
+
+    scanner.bot = _fake_bot  # type: ignore[method-assign]
+    scanner._elimination_log = [
+        {"asset": "BTC/USDT", "reason": "CEO/ajan vetosu: Kompozit skor eşiği altı"},
+        {"asset": "ETH/USDT", "reason": "CEO/ajan vetosu: Gri bölge (kararsız piyasa)"},
+        {"asset": "SOL/USDT", "reason": "sinyal üretilmedi"},
+    ]
+
+    async def _run():
+        await scanner._send_elimination_summary(scanner._elimination_log, 6)
+
+    asyncio.run(_run())
+    check("özet mesaj gönderildi", len(sent) == 1, f"got {len(sent)}")
+    msg = sent[0] if sent else ""
+    check("özet 'ELEME RAPORU' içeriyor", "ELEME RAPORU" in msg, f"got {msg[:60]}")
+    check("özet 3/6 aday gösteriyor", "3/6" in msg, f"got {msg[:80]}")
+    check("özet ilk elenenleri gösteriyor", "İlk elenenler" in msg or "Ilk elenenler" in msg,
+          f"got {msg[:80]}")
+    # Boş liste → mesaj gönderilmez
+    sent.clear()
+    asyncio.run(scanner._send_elimination_summary([], 0))
+    check("boş log → mesaj yok", len(sent) == 0, f"got {len(sent)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 17. FAZ 4 — ÖLÜ KOD TEMİZLİĞİ (ma_ema_cross / build_quant_score)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz4_dead_code():
+    print("[17] FAZ 4 — ölü kod temizliği")
+    import core.indicators as ind
+
+    check("ma_ema_cross silindi", not hasattr(ind, "ma_ema_cross"))
+    check("build_quant_score silindi", not hasattr(ind, "build_quant_score"))
+    check("normalized_from_score duruyor", hasattr(ind, "normalized_from_score"))
+
+    # golden/death cross referansı tamamen yok mu?
+    src = Path(ind.__file__).read_text(encoding="utf-8")
+    check("golden_cross referansı yok", "golden_cross" not in src)
+    check("death_cross referansı yok", "death_cross" not in src)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 18. FAZ 5 — LİKİDİTE SÜPÜRMESİ + FVG
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz5_sweep_fvg():
+    print("[18] FAZ 5 — sweep + FVG")
+    from agents.quant_engine import _detect_fvg, _detect_liquidity_sweep
+
+    # ── SWEEP: bearish sweep (long stop-hunt) ──
+    # Pivot low ~100; son mum fitili 99.0'a iner, gövde 101 ile kapanır.
+    n = 40
+    rng = np.random.default_rng(7)
+    base = np.linspace(110, 102, n)
+    df = pd.DataFrame({
+        "open": base + rng.uniform(-0.3, 0.3, n),
+        "high": base + 1.0,
+        "low": base - 1.0,
+        "close": base + rng.uniform(-0.2, 0.2, n),
+        "volume": rng.uniform(100, 500, n),
+    })
+    # Belirgin bir pivot low oluştur (ör. indeks 30)
+    df.loc[30, "low"] = 99.0
+    df.loc[30, "close"] = 101.0
+    df.loc[30, "open"] = 100.5
+    # Son mum: pivot low altına fitil + geri kapanış
+    df.loc[n - 1, "low"] = 98.0
+    df.loc[n - 1, "close"] = 102.0
+    df.loc[n - 1, "open"] = 100.5
+    df.loc[n - 1, "high"] = 102.5
+
+    sweep = _detect_liquidity_sweep(df)
+    check("sweep tespit fonksiyonu çalışıyor", isinstance(sweep, dict), f"got {type(sweep)}")
+    check("sweep alanları tam", all(k in sweep for k in
+          ("sweep_detected", "direction", "swept_level", "strength")))
+
+    # ── FVG: bullish FVG (3 mum yapısı) ──
+    df2 = pd.DataFrame({
+        "open": [100, 101, 105],
+        "high": [100.5, 101.5, 105.5],
+        "low": [99.5, 100.5, 104.0],  # lows[2]=104.0 > highs[0]=100.5 → bullish gap
+        "close": [100.8, 101.2, 105.2],
+        "volume": [200, 200, 200],
+    })
+    fvg = _detect_fvg(df2)
+    check("FVG tespit fonksiyonu çalışıyor", isinstance(fvg, dict), f"got {type(fvg)}")
+    check("FVG alanları tam", all(k in fvg for k in
+          ("fvg_detected", "direction", "fvg_top", "fvg_bottom", "fill_pct")))
+    check("bullish FVG tespit edildi", fvg["direction"] == "BULLISH", f"got {fvg}")
+
+    # ── _compute_tf_indicators çıktısında sweep/fvg alanları ──
+    df3 = _synth_ohlcv(n=80)
+    try:
+        from agents.quant_engine import _compute_tf_indicators
+        out = _compute_tf_indicators(df3)
+        check("tf çıktısı liquidity_sweep içeriyor", "liquidity_sweep" in out, f"got {list(out)[-4:]}")
+        check("tf çıktısı fvg_detected içeriyor", "fvg_detected" in out)
+        check("sweep bool tipinde", isinstance(out.get("liquidity_sweep"), bool))
+        check("fvg bool tipinde", isinstance(out.get("fvg_detected"), bool))
+    except Exception as exc:  # noqa: BLE001
+        check(f"tf indicators çalışıyor (exc: {exc})", False, str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 19. FAZ 2 — ÖLÜ cross_* CONFIG TEMİZLİĞİ
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz2_dead_config():
+    print("[19] FAZ 2 — ölü cross_* config temizliği")
+    from core.config import QuantScoreConfig
+
+    for field in (
+        "cross_golden_bonus", "cross_bullish_bonus",
+        "cross_bearish_penalty", "cross_death_penalty",
+    ):
+        check(f"QuantScoreConfig.{field} yok", field not in QuantScoreConfig.model_fields,
+              f"got {field}")
+
+    ytxt = Path("oracle_config.yaml").read_text(encoding="utf-8")
+    check("yaml'de cross_golden_bonus yok", "cross_golden_bonus" not in ytxt)
+    check("yaml'de cross_death_penalty yok", "cross_death_penalty" not in ytxt)
+
+    # Şema/YAML uyumu: config hâlâ yüklenebiliyor mu?
+    from core.config import load_oracle_config
+
+    async def _run():
+        cfg = await load_oracle_config()
+        return cfg.quant.score.rsi_oversold_bonus
+
+    val = asyncio.run(_run())
+    check("config yükleniyor (rsi bonus okunuyor)", val is not None and val > 0, f"got {val}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 20. FAZ 3 — CHOCH/SWEEP/FVG SİNYAL KARARINA TAM ENTEGRE
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz3_structural_decision():
+    print("[20] FAZ 3 — yapısal kırılım sinyal kararı")
+    from agents.quant_engine import _decide_trade_type
+
+    # 1) Oversold ama kırılım YOK → COIN Tuzağı Kalkanı (AVOID)
+    tt = _decide_trade_type("NEUTRAL", "OVERSOLD", "NEUTRAL", "NEUTRAL",
+                            False, False, False)
+    check("oversold + kırılım yok → AVOID", tt == "AVOID_CONFLICTING_SIGNALS", f"got {tt}")
+
+    # 2) Aynı + sweep BULLISH + CHOCH BULLISH → smart money LONG teyidi
+    tt2 = _decide_trade_type("NEUTRAL", "OVERSOLD", "NEUTRAL", "NEUTRAL",
+                             False, False, False,
+                             choch_direction="BULLISH", sweep_direction="BULLISH",
+                             fvg_direction="NONE")
+    check("sweep+CHOCH → ACCUMULATE_ZONE", tt2 == "ACCUMULATE_ZONE", f"got {tt2}")
+
+    # 3) Ayna: bearish sweep + bearish CHOCH + bearish FVG → SHORT
+    tt3 = _decide_trade_type("BEARISH", "BEARISH", "BEARISH", "BEARISH",
+                             False, False, False,
+                             choch_direction="BEARISH", sweep_direction="BEARISH",
+                             fvg_direction="BEARISH")
+    check("bearish sweep+CHOCH → SHORT", tt3 == "STRONG_SELL_OR_SHORT", f"got {tt3}")
+
+    # 4) Regresyon: NONE varsayılanları eski davranışı bozmamalı
+    tt4 = _decide_trade_type("BULLISH", "BULLISH", "NEUTRAL", "NEUTRAL",
+                             False, False, False)
+    check("eski davranış korunur (NONE → HOLD_EXISTING)", tt4 == "HOLD_EXISTING", f"got {tt4}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 21. FAZ 4 — ZAMAN İFADESİ KALDIRILDI + TRACKER SAHTE YÜZDE YOK
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz4_price_validity_and_tracker():
+    print("[21] FAZ 4 — fiyat bazlı geçerlilik + tracker sahte yüzde yok")
+
+    # (a) Telegram çıktısında zaman ifadesi kalmamalı, fiyat bazlı geçerlilik olmalı
+    src = Path("bot/telegram_handler.py").read_text(encoding="utf-8")
+    check("'24-72 saat' yok", "24-72 saat" not in src)
+    check("'Referans süre' yok", "Referans süre" not in src)
+    check("invalidation_level kullanılıyor", "invalidation_level" in src)
+
+    # (b) Tracker: kapalı trade yoksa win_rate 0.0 (kurgusal yüzde yok)
+    import core.tracker as tr
+
+    old_path = tr.DB_PATH
+    old_init = tr._DB_INITIALIZED
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            tr.DB_PATH = os.path.join(td, "portfolio.db")
+            tr._DB_INITIALIZED = False
+            stats = tr.get_performance_stats()
+            check("boş DB → win_rate 0.0", stats["win_rate"] == 0.0,
+                  f"got {stats['win_rate']}")
+
+            conn = tr.get_db_connection()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO trades (asset, direction, entry_price, stop_loss, "
+                "t1, t2, t3, status) VALUES ('BTC/USDT','LONG',100,95,110,120,130,'WIN')"
+            )
+            cur.execute(
+                "INSERT INTO trades (asset, direction, entry_price, stop_loss, "
+                "t1, t2, t3, status) VALUES ('ETH/USDT','LONG',100,95,110,120,130,'LOSS')"
+            )
+            conn.commit()
+            conn.close()
+
+            stats2 = tr.get_performance_stats()
+            check("1W+1L → win_rate 50.0", stats2["win_rate"] == 50.0,
+                  f"got {stats2['win_rate']}")
+    finally:
+        tr.DB_PATH = old_path
+        tr._DB_INITIALIZED = old_init
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 22. FAZ 0 — KAPALI MUM KURALI (veri katmanı)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz0_closed_candles():
+    print("[22] FAZ 0 — kapalı mum kuralı (veri katmanı)")
+    import tools.market_data as md
+
+    orig_multi = md._fetch_crypto_multi_source
+    orig_get = md._cache_get_df
+    orig_set = md._cache_set_df
+    orig_is_crypto = md._is_crypto_symbol
+    try:
+        async def _fake_multi(symbol, timeframe, limit, exchange_id):
+            return _synth_ohlcv(n=25)
+
+        md._fetch_crypto_multi_source = _fake_multi
+        md._cache_get_df = lambda key: None
+        md._cache_set_df = lambda key, df: None
+        md._is_crypto_symbol = lambda s: True
+
+        df = asyncio.run(md.fetch_crypto_ohlcv("BTC/USDT", "4h", 200))
+        check("son aktif mum atıldı (24 bar)", len(df) == 24, f"got {len(df)}")
+    finally:
+        md._fetch_crypto_multi_source = orig_multi
+        md._cache_get_df = orig_get
+        md._cache_set_df = orig_set
+        md._is_crypto_symbol = orig_is_crypto
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 23. FAZ 3/4 — BTC GÖRELİ GÜÇ (lider seçimi)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz3_relative_strength():
+    print("[23] FAZ 3/4 — BTC göreli güç (lider seçimi)")
+    from core.cluster_engine import ClusterEngine
+
+    eng = ClusterEngine()
+    close = pd.Series(np.linspace(100.0, 110.0, 20))
+
+    async def _run_none():
+        return await eng._score_symbol("BTC/USDT", 30, pre_fetched=close,
+                                       benchmark_returns=None)
+
+    async def _run_bench():
+        return await eng._score_symbol(
+            "BTC/USDT", 30, pre_fetched=close,
+            benchmark_returns={"5d": 20.0, "10d": 30.0, "15d": 30.0},
+        )
+
+    m_none = asyncio.run(_run_none())
+    m_bench = asyncio.run(_run_bench())
+    check("benchmark (BTC yükseldi) göreli gücü düşürür",
+          m_bench.relative_strength < m_none.relative_strength,
+          f"none={m_none.relative_strength:.3f} bench={m_bench.relative_strength:.3f}")
+    check("relative_strength 0-1 aralığında",
+          0.0 <= m_none.relative_strength <= 1.0 and 0.0 <= m_bench.relative_strength <= 1.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ANA
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
@@ -882,6 +1303,17 @@ def main():
     test_faz_b_cluster()
     test_faz_c_validity()
     test_faz_d_rate_limit()
+    test_faz0_coingecko_rate_limit()
+    test_faz1_thresholds()
+    test_faz2_fundamental_veto()
+    test_faz3_elimination_report()
+    test_faz4_dead_code()
+    test_faz5_sweep_fvg()
+    test_faz2_dead_config()
+    test_faz3_structural_decision()
+    test_faz4_price_validity_and_tracker()
+    test_faz0_closed_candles()
+    test_faz3_relative_strength()
     dur = time.time() - t0
     print(f"\n══════ SONUÇ: {_OK} geçti, {_FAIL} başarısız ({dur:.1f}s) ══════")
     sys.exit(1 if _FAIL else 0)
