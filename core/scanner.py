@@ -37,6 +37,14 @@ from core.trade_plan import build_trade_plan
 from tools.market_data import fetch_crypto_ohlcv, fetch_stock_macro_data
 
 
+# ── GLOBAL TARAMA KİLİDİ ──────────────────────────────────────────────────────
+# Tüm OracleScanner örnekleri (sabah döngüsü + /tarama komutu) aynı anda tarama
+# yapmamalı. Örnek başına `_scan_in_progress` yalnızca AYNI örneği korur; /tarama
+# her seferinde YENİ bir OracleScanner oluşturduğu için iki tarama aynı anda
+# koşuyordu → duplike sinyal/digest/tracker kaydı. Bu global bayrak bunu engeller.
+_GLOBAL_SCAN_ACTIVE = False
+
+
 class OracleScanner:
     def __init__(self, pipeline_runner, telegram_bot, config: dict):
         """
@@ -621,9 +629,11 @@ class OracleScanner:
           Katman 2: Derin pipeline sıralı + varlık başına timeout + heartbeat + gc
           Katman 3: Digest v2 teslimatı (rejim korelasyonu + MTF + geçerlilik penceresi)
         """
-        if self._scan_in_progress:
-            logger.info("[SCANNER] Tarama zaten aktif — çift tetikleme koruması (guard).")
+        global _GLOBAL_SCAN_ACTIVE
+        if _GLOBAL_SCAN_ACTIVE or self._scan_in_progress:
+            logger.info("[SCANNER] Tarama zaten aktif — global çift tetikleme koruması (guard).")
             return
+        _GLOBAL_SCAN_ACTIVE = True
         self._scan_in_progress = True
         run_id = f"scan_{int(time.time())}"
         # FAZ B: önceki koşunun küme haritalarını sıfırla (bayat veri sızması olmasın)
@@ -806,6 +816,7 @@ class OracleScanner:
                 pass
         finally:
             self._scan_in_progress = False
+            _GLOBAL_SCAN_ACTIVE = False
 
     async def _full_scan_done_today(self, store, tz) -> bool:
         """
@@ -1167,7 +1178,7 @@ class OracleScanner:
             emoji = signal_emojis.get(opp.get("signal", ""), "⚪")
             rr = f"R:R 1:{opp['base_rr']:.1f}" if opp.get("base_rr") else ""
             lines.append(
-                f"🔥 {opp.get('asset')} — {opp.get('signal')} | Puan Onay: "
+                f"🔥 {opp.get('asset')} — {opp.get('signal')} | Kompozit Skor: "
                 f"{opp.get('composite_pct')}% | {rr}"
             )
             # 🔎 NEDEN: bu varlık adaya nasıl seçildi? (FASE B — şeffaf gerekçe)

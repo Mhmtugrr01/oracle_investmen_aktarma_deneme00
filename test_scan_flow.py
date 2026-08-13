@@ -1286,6 +1286,74 @@ def test_faz3_relative_strength():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 24. FAZ 0 — COINCAP DOMINANS YEDEĞİ (gerçek BTC.D / USDT.D)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz0_coincap_dominance():
+    print("[24] FAZ 0 — CoinCap dominans hesabı (saf fonksiyon)")
+    from core.regime_engine import _dominance_from_asset_mcaps
+
+    assets = [
+        {"symbol": "BTC", "marketCapUsd": "5000.0"},
+        {"symbol": "ETH", "marketCapUsd": "3000.0"},
+        {"symbol": "USDT", "marketCapUsd": "2000.0"},
+        {"symbol": "SOL", "marketCapUsd": 1000.0},
+    ]
+    res = _dominance_from_asset_mcaps(assets)
+    # total = 11000 → BTC.D 45.45, USDT.D 18.18
+    check("btc_d gerçek yüzde", res["btc_d"] is not None and abs(res["btc_d"] - 45.45) < 0.01,
+          f"got {res['btc_d']}")
+    check("usdt_d gerçek yüzde", res["usdt_d"] is not None and abs(res["usdt_d"] - 18.18) < 0.01,
+          f"got {res['usdt_d']}")
+    check("total_market_cap toplam", res["total_market_cap"] == 11000.0,
+          f"got {res['total_market_cap']}")
+
+    # BTC yoksa yanlış değer üretilmez (None)
+    res2 = _dominance_from_asset_mcaps([{"symbol": "ETH", "marketCapUsd": "100.0"}])
+    check("BTC yok → btc_d None", res2["btc_d"] is None, f"got {res2}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 25. SEMBOL NORMALİZASYONU — /oracle jpm hisse olarak kalır
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz_symbol_normalization():
+    print("[25] SEMBOL — /oracle hisse/emtia /USDT eklemez")
+    from bot.telegram_handler import _normalize_symbol
+    from core.config import load_oracle_config
+
+    asyncio.run(load_oracle_config())  # config cache'ini doldur
+
+    check("jpm → JPM (hisse)", _normalize_symbol("jpm") == "JPM",
+          f"got {_normalize_symbol('jpm')}")
+    check("btc → BTC/USDT (kripto)", _normalize_symbol("btc") == "BTC/USDT",
+          f"got {_normalize_symbol('btc')}")
+    check("xom → XOM (hisse)", _normalize_symbol("xom") == "XOM")
+    check("nvda → NVDA (hisse)", _normalize_symbol("nvda") == "NVDA")
+    check("asels → ASELS.IS (BIST)", _normalize_symbol("asels") == "ASELS.IS",
+          f"got {_normalize_symbol('asels')}")
+    check("eth → ETH/USDT (kripto)", _normalize_symbol("eth") == "ETH/USDT")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 26. ÇİFT TARAMA KORUMASI — global guard
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz_global_scan_guard():
+    print("[26] ÇİFT TARAMA — global koruma (duplike sinyal engeli)")
+    import core.scanner as scanner_mod
+    from core.scanner import OracleScanner
+
+    sc = OracleScanner(None, None, {"scan_schedule": {}, "asset_universe": {}})
+    sc._scan_in_progress = False
+    old = scanner_mod._GLOBAL_SCAN_ACTIVE
+    try:
+        # Başka bir tarama aktifken (örn. sabah taraması + /tarama) ikinci tarama atlanır
+        scanner_mod._GLOBAL_SCAN_ACTIVE = True
+        asyncio.run(sc._run_scan_once(notify_start=False, trigger="test"))
+        check("guard aktifken _scan_in_progress False kalır", sc._scan_in_progress is False)
+    finally:
+        scanner_mod._GLOBAL_SCAN_ACTIVE = old
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ANA
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
@@ -1314,6 +1382,9 @@ def main():
     test_faz4_price_validity_and_tracker()
     test_faz0_closed_candles()
     test_faz3_relative_strength()
+    test_faz0_coincap_dominance()
+    test_faz_symbol_normalization()
+    test_faz_global_scan_guard()
     dur = time.time() - t0
     print(f"\n══════ SONUÇ: {_OK} geçti, {_FAIL} başarısız ({dur:.1f}s) ══════")
     sys.exit(1 if _FAIL else 0)

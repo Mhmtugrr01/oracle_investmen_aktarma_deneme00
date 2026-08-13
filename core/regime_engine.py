@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 COINGECKO_API = "https://api.coingecko.com/api/v3"
 COINPAPRIKA_API = "https://api.coinpaprika.com/v1"
+COINCAP_API = "https://api.coincap.io/v2"
 
 # ── CoinGecko rate-limit koruması (FAZ 0) ────────────────────────────────────
 # Ücretsiz API ~10-30 istek/dk sınırına sahiptir; 429 almamak için tüm
@@ -309,6 +310,88 @@ async def _fetch_dominance_via_yfinance() -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  FAZ 0 — COINCAP.IO FALLBACK (GERÇEK BTC.D / USDT.D / toplam mcap)
+#  Ücretsiz, API anahtarı gerektirmez; CoinGecko 429'unu kalıcı çözer.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _dominance_from_asset_mcaps(assets: list[dict]) -> dict:
+    """CoinCap /assets listesinden GERÇEK BTC.D/USDT.D/toplam mcap hesapla.
+
+    Saf fonksiyon — ağ gerektirmez, test edilebilir.
+    Dönüş: {"btc_d": %|None, "usdt_d": %|None, "total_market_cap": float|None}
+    """
+    total = 0.0
+    btc_mcap = 0.0
+    usdt_mcap = 0.0
+    for a in assets:
+        sym = str(a.get("symbol") or "").upper()
+        try:
+            mcap = float(a.get("marketCapUsd") or 0.0)
+        except (TypeError, ValueError):
+            mcap = 0.0
+        total += mcap
+        if sym == "BTC":
+            btc_mcap = mcap
+        elif sym == "USDT":
+            usdt_mcap = mcap
+
+    if total <= 0 or btc_mcap <= 0:
+        return {"btc_d": None, "usdt_d": None, "total_market_cap": None}
+
+    return {
+        "btc_d": round(btc_mcap / total * 100.0, 2),
+        "usdt_d": round(usdt_mcap / total * 100.0, 2) if usdt_mcap > 0 else None,
+        "total_market_cap": float(total),
+    }
+
+
+async def _fetch_dominance_via_coincap() -> dict:
+    """
+    CoinCap.io üzerinden GERÇEK BTC.D / USDT.D / toplam piyasa değeri.
+
+    CoinGecko 429 verdiğinde birinci yedek: /assets tüm varlıkların
+    marketCapUsd'sini tek çağrıda döndürür → BTC.D ve USDT.D tam yüzde
+    olarak hesaplanır (yfinance yön proxy'sinden çok daha doğru).
+
+    Dönüş anahtarları: btc_d, usdt_d, usdt_d_trend, total_market_cap,
+                       source, warning
+    """
+    try:
+        url = f"{COINCAP_API}/assets"
+        timeout = aiohttp.ClientTimeout(total=15)
+        connector = aiohttp.TCPConnector(ssl=build_ssl_context(True))
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with session.get(url, params={"limit": 2000}) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"CoinCap HTTP {resp.status}")
+                payload = await resp.json()
+
+        assets = payload.get("data") or []
+        dom = _dominance_from_asset_mcaps(assets)
+        if dom.get("btc_d") is None:
+            raise ValueError("CoinCap piyasa değeri hesaplanamadı")
+
+        return {
+            "btc_d": dom["btc_d"],
+            "usdt_d": dom["usdt_d"],
+            "usdt_d_trend": "FLAT",
+            "total_market_cap": dom["total_market_cap"],
+            "source": "coincap",
+            "warning": None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[REGIME] CoinCap dominans başarısız: {exc}")
+        return {
+            "btc_d": None,
+            "usdt_d": None,
+            "usdt_d_trend": "UNKNOWN",
+            "total_market_cap": None,
+            "source": "unavailable",
+            "warning": f"CoinCap dominans verisi alınamadı: {exc}",
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  EKONOMİK TAKVİM (hafif, makro_sentinel ile aynı kaynak)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -522,7 +605,7 @@ def correlate_signal_with_regime(
     if regime is None:
         result["aligned"] = False
         result["confidence_modifier"] = 0.90
-        result["validity_text"] = f"{tf} sinyali: rejim verisi yok, standart pencere geçerli ({lo_h:g}-{hi_h:g} saat)."
+        result["validity_text"] = f"{tf} sinyali: rejim verisi yok — üst zaman dilimi teyidi iste."
         result["invalidation_text"] = "Rejim verisi alınamadığından sinyal teyidi için 2. zaman dilimini bekle."
         return result
 
@@ -536,8 +619,7 @@ def correlate_signal_with_regime(
             result["confidence_modifier"] = min(1.15, 1.0 + (regime.risk_appetite - 1.0) * 0.5)
             result["validity_text"] = (
                 f"{tf} LONG: rejim destekli (BTC.D {_fmt_btc_trend(regime, '1h')}, "
-                f"genel {primary}). Pencere {lo_h:g}-{hi_h:g} saat; "
-                f"{hi_h:g} saat üzeri günlük direnç bölgelerinde kar al."
+                f"genel {primary}). Üst zaman dilimi direnç bölgesine kadar geçerli."
             )
             result["invalidation_text"] = "BTC.D 4h yukarı dönerse veya DXY güçlenirse sinyal geçersiz."
         elif timing == "BEARISH" or primary == "RISK_OFF":
@@ -545,7 +627,7 @@ def correlate_signal_with_regime(
             result["confidence_modifier"] = max(0.60, regime.risk_appetite)
             result["validity_text"] = (
                 f"{tf} LONG: rejimle TERS (BTC.D {_fmt_btc_trend(regime, '4h')}, {primary}). "
-                f"Pencere daraltıldı ({lo_h:g}-{min(hi_h, lo_h * 2):g} saat) — sadece kısa vadeli tepki."
+                f"Sadece kısa vadeli tepki — dar giriş bölgesi."
             )
             result["invalidation_text"] = "BTC.D dönüşü veya VIX sıçraması sinyali anında iptal eder."
         else:
@@ -553,7 +635,7 @@ def correlate_signal_with_regime(
             result["confidence_modifier"] = regime.risk_appetite
             result["validity_text"] = (
                 f"{tf} LONG: rejim nötr (timing={timing}, trend={primary}). "
-                f"Pencere {lo_h:g}-{hi_h:g} saat; yüksek zaman diliminde teyit iste."
+                f"Yüksek zaman diliminde teyit iste."
             )
             result["invalidation_text"] = "BTC.D 4h yukarı dönüşü veya DXY > 1 günlük güçlenme geçersiz kılar."
     else:
@@ -562,24 +644,20 @@ def correlate_signal_with_regime(
             result["aligned"] = True
             result["confidence_modifier"] = min(1.15, 1.0 + (1.0 - regime.risk_appetite) * 0.4)
             result["validity_text"] = (
-                f"{tf} SHORT: rejim destekli (BTC.D {_fmt_btc_trend(regime, '1h')} yükseliyor, {primary}). "
-                f"Pencere {lo_h:g}-{hi_h:g} saat."
+                f"{tf} SHORT: rejim destekli (BTC.D {_fmt_btc_trend(regime, '1h')} yükseliyor, {primary})."
             )
             result["invalidation_text"] = "BTC.D 4h aşağı dönerse veya VIX hızla düşerse sinyal geçersiz."
         elif timing == "BULLISH" or primary == "RISK_ON":
             result["aligned"] = False
             result["confidence_modifier"] = max(0.60, 1.0 - (regime.risk_appetite - 0.8))
             result["validity_text"] = (
-                f"{tf} SHORT: rejimle TERS (BTC.D {_fmt_btc_trend(regime, '4h')}, {primary}). "
-                f"Pencere daraltıldı ({lo_h:g}-{min(hi_h, lo_h * 2):g} saat)."
+                f"{tf} SHORT: rejimle TERS (BTC.D {_fmt_btc_trend(regime, '4h')}, {primary})."
             )
             result["invalidation_text"] = "Risk-on devam ederse sinyal iptal olur."
         else:
             result["aligned"] = True
             result["confidence_modifier"] = regime.risk_appetite
-            result["validity_text"] = (
-                f"{tf} SHORT: rejim nötr. Pencere {lo_h:g}-{hi_h:g} saat."
-            )
+            result["validity_text"] = f"{tf} SHORT: rejim nötr."
             result["invalidation_text"] = "BTC.D 4h aşağı dönüşü veya DXY zayıflaması geçersiz kılar."
 
     result["confidence_modifier"] = round(max(0.55, min(1.20, result["confidence_modifier"])), 3)
@@ -670,7 +748,7 @@ class RegimeSnapshotProvider:
                 except Exception as exc:  # noqa: BLE001
                     snap.source_flags[f"yf_{key}"] = f"fail:{exc}"
 
-            # ── Dominans / likidite (CoinGecko, FAZ 0: yfinance fallback) ────
+            # ── Dominans / likidite (CoinGecko → CoinCap → yfinance) ─────────
             cg_global = await _coingecko_get_json("global")
             if isinstance(cg_global, dict):
                 data = cg_global.get("data", cg_global)
@@ -680,22 +758,33 @@ class RegimeSnapshotProvider:
                 snap.source_flags["coingecko_global"] = "ok"
             else:
                 snap.source_flags["coingecko_global"] = "fail"
-                # FAZ 0: CoinGecko erişilemedi → yfinance yön proxy'si
-                yf_dom = await _fetch_dominance_via_yfinance()
-                if yf_dom.get("btc_d") is not None:
-                    snap.btc_d = float(yf_dom["btc_d"])
-                    snap.usdt_d = float(yf_dom["usdt_d"]) if yf_dom.get("usdt_d") is not None else None
-                    snap.total_market_cap = yf_dom.get("total_market_cap")
-                    snap.source_flags["coingecko_global"] = "yfinance_proxy"
-                    # USDT.D nötr trend işaretle (Faz C tüketicileri yön bilgisini kullanır)
-                    usdt_trend_fb = str(yf_dom.get("usdt_d_trend", "FLAT"))
-                    snap.dominance.usdt_d["1d"] = snap.dominance.usdt_d.get("1d", []) or []
-                    snap.dominance.usdt_d_trend["1d"] = usdt_trend_fb
-                    snap.dominance.source = "yfinance_proxy"
-                    if yf_dom.get("warning"):
-                        snap.warnings.append(str(yf_dom["warning"]))
+                # FAZ 0: CoinGecko 429 → 1) CoinCap (GERÇEK %), 2) yfinance yön proxy'si
+                cc_dom = await _fetch_dominance_via_coincap()
+                if cc_dom.get("btc_d") is not None:
+                    snap.btc_d = float(cc_dom["btc_d"])
+                    snap.usdt_d = float(cc_dom["usdt_d"]) if cc_dom.get("usdt_d") is not None else None
+                    snap.total_market_cap = cc_dom.get("total_market_cap")
+                    snap.source_flags["coingecko_global"] = "coincap"
+                    snap.dominance.usdt_d_trend["1d"] = str(cc_dom.get("usdt_d_trend", "FLAT"))
+                    snap.dominance.source = "coincap"
+                    if cc_dom.get("warning"):
+                        snap.warnings.append(str(cc_dom["warning"]))
                 else:
-                    snap.warnings.append("CoinGecko ve yfinance dominans verisi alınamadı")
+                    yf_dom = await _fetch_dominance_via_yfinance()
+                    if yf_dom.get("btc_d") is not None:
+                        snap.btc_d = float(yf_dom["btc_d"])
+                        snap.usdt_d = float(yf_dom["usdt_d"]) if yf_dom.get("usdt_d") is not None else None
+                        snap.total_market_cap = yf_dom.get("total_market_cap")
+                        snap.source_flags["coingecko_global"] = "yfinance_proxy"
+                        # USDT.D nötr trend işaretle (Faz C tüketicileri yön bilgisini kullanır)
+                        usdt_trend_fb = str(yf_dom.get("usdt_d_trend", "FLAT"))
+                        snap.dominance.usdt_d["1d"] = snap.dominance.usdt_d.get("1d", []) or []
+                        snap.dominance.usdt_d_trend["1d"] = usdt_trend_fb
+                        snap.dominance.source = "yfinance_proxy"
+                        if yf_dom.get("warning"):
+                            snap.warnings.append(str(yf_dom["warning"]))
+                    else:
+                        snap.warnings.append("CoinGecko, CoinCap ve yfinance dominans verisi alınamadı")
 
             # ── BTC.D çoklu zaman dilimi ─────────────────────────────────────
             snap.dominance = await _fetch_btc_d_mtf()

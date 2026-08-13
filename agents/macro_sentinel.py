@@ -159,6 +159,10 @@ def _get_dominance_via_yfinance_sync() -> dict:
             )
             if usdt_df is not None and not usdt_df.empty:
                 usdt_close = usdt_df.get("Close")
+                # Bazı yfinance sürümlerinde .get("Close") DataFrame döner (çok sütunlu);
+                # Series'e sıkıştır, yoksa .tolist() hata verir.
+                if isinstance(usdt_close, pd.DataFrame):
+                    usdt_close = usdt_close.iloc[:, 0]
                 if usdt_close is not None and not usdt_close.dropna().empty:
                     usdt_series = [float(c) for c in usdt_close.dropna().tolist()]
                     usdt_last = usdt_series[-1]

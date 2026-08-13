@@ -72,6 +72,27 @@ def _normalize_symbol(raw: str) -> str:
         
     if "/" in token:
         return token
+
+    # ── Hisse/emtia evrenindeki sembollere /USDT EKLEME ─────────────────────
+    # Örn. /oracle jpm → "JPM" (ABD hissesi), /oracle asels → "ASELS.IS" (BIST),
+    #      /oracle altin → "GC=F" (emtia), /oracle btc → "BTC/USDT" (kripto).
+    try:
+        cfg = get_oracle_config_cached()
+        universe = getattr(cfg, "asset_universe", None) or {}
+        for key, assets in universe.items():
+            if str(key).lower() == "crypto" or not isinstance(assets, list):
+                continue
+            for a in assets:
+                a_up = str(a).upper()
+                base = a_up.split("/", 1)[0]
+                if a_up == token or base == token:
+                    return a_up
+                # BIST kısaltması: "ASELS" → "ASELS.IS"
+                if base.endswith(".IS") and base.split(".", 1)[0] == token:
+                    return a_up
+    except Exception:
+        pass
+
     return f"{token}/USDT"
 
 
