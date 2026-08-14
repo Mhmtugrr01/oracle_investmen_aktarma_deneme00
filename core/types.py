@@ -153,7 +153,13 @@ class OracleState(BaseModel):
     choch_break_level: Optional[float] = Field(default=None)
     rsi_trendline_break: Optional[bool] = Field(default=None)
     rsi_break_direction: Optional[str] = Field(default=None)  # 'BULLISH' | 'BEARISH' | 'NONE'
-    
+
+    # ── FAZ 2: ASİMETRİK MOTOR (Sweep+CHOCH & RSI Breakout & USDT.D) ───────
+    asymmetric_reason: Optional[str] = Field(default=None)  # "Sweep+CHOCH & RSI Breakout"
+    asymmetric_fired: bool = Field(default=False)           # üç motor aynı anda onayladı mı?
+    asymmetric_macro_approved: Optional[bool] = Field(default=None)  # USDT.D onayı
+    asymmetric_rs_score: Optional[float] = Field(default=None)       # RS_Score (göreli güç)
+
     # ── Korelasyon Kümeleme Sonuçları ──────────────────────────────────────
     cluster_id: Optional[int] = Field(default=None)
     cluster_theme: Optional[str] = Field(default=None)
@@ -355,6 +361,10 @@ class OracleStateUpdate(BaseModel):
     fear_greed_value: Optional[int] = None
     consensus_variance: Optional[float] = Field(default=None, ge=0.0)
     ma_fallback_used: Optional[bool] = None
+    asymmetric_reason: Optional[str] = None
+    asymmetric_fired: Optional[bool] = None
+    asymmetric_macro_approved: Optional[bool] = None
+    asymmetric_rs_score: Optional[float] = None
     oracle_summary: Optional[str] = None
     messages: Optional[list[str]] = None
 

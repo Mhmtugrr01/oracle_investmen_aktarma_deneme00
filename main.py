@@ -139,7 +139,23 @@ async def oracle_scanner_loop():
     cfg = await load_oracle_config()
     scanner = OracleScanner(_pipeline_runner, _telegram_sender, cfg.model_dump())
     logger.info("[SCANNER_MAIN] 4 katmanlı tarayıcı başlatılıyor (gece 04:00-09:00 penceresi).")
-    await scanner.start()
+    # FAZ 4 — ÇELİK YELEK: tarama motorunun kendisi ölümcül hata ile çökerse
+    # Telegram'a kritik bildirim gönderilir ve motor otomatik yeniden başlatılır.
+    while True:
+        try:
+            await scanner.start()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"[SCANNER_MAIN] Tarama motoru çöktü: {exc}")
+            try:
+                await _telegram_sender(
+                    f"🚨 CRITICAL: Tarama motoru beklenmedik bir hatadan çöktü. "
+                    f"Hata: {exc}"
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            await asyncio.sleep(60)  # 60 sn sonra motoru yeniden başlat (self-heal)
 
 handler = None
 _BOT_LOCK_FD = None

@@ -16,6 +16,7 @@ import yfinance as yf
 from loguru import logger
 
 from core.asset_classifier import classify_asset, is_crypto
+from core.asymmetric_engine import asymmetric_long_signal
 from core.config import load_oracle_config
 from core.console import BLUE, GREEN, agent_print, error_print
 from core.indicators import normalized_from_score
@@ -566,11 +567,9 @@ def _classify_bias(price: float, ema50: float, sma200: float, rsi: float,
         return "BULLISH"
     if market_structure == "BEARISH_STRUCTURE" and price < ema50:
         return "BEARISH"
-    # Klasik EMA/SMA filtresi
-    if price > ema50 > sma200 and 50 <= rsi <= 70:
-        return "BULLISH"
-    if price < ema50 < sma200 and 30 <= rsi <= 50:
-        return "BEARISH"
+    # FAZ 1 — THE PURGE: Klasik EMA50>SMA200 (golden/death cross) ve düz RSI
+    # 50-70 "sağlıklı trend" filtresi KALDIRILDI. Bias artık piyasa yapısı + fiyatın
+    # EMA50'ye göre konumu + temel RSI bölgelerine dayanır; kesişim sinyali yok.
     if rsi < 35:
         return "OVERSOLD"
     if rsi > 65:
@@ -1274,16 +1273,9 @@ def _technical_unit_from_timeframes(tf: dict[str, dict[str, Any]], divergence_bo
         elif daily_rsi > 72: score -= 0.10
         elif daily_rsi > 62: score -= 0.05
 
-    # --- MACD çok zaman dilimi uyumu ---
-    h4_macd    = float(h4.get("macd_hist", 0.0))
-    daily_macd = float(daily.get("macd_hist", 0.0))
-
-    if h4_macd > 0 and daily_macd > 0:
-        score += 0.09   # İki dilim MACD pozitif = momentum onayı
-    elif h4_macd < 0 and daily_macd < 0:
-        score -= 0.09   # İki dilim MACD negatif = düşüş baskısı
-    else:
-        score += 0.03 if h4_macd > 0 else -0.03
+    # FAZ 1 — THE PURGE: MACD histogram momentum onayı skorlamadan KALDIRILDI.
+    # (Gecikmeli klasik indikatör; momentum teyidi FAZ 2'de RSI trendline-kırılımı
+    # ile yapılır.)
 
     # --- OBV (hacim yönü) ---
     score += 0.07 if h1["obv_trend"] == "UP" else -0.07
@@ -1407,52 +1399,17 @@ def _compute_signal_formation(
     score += alignment_contrib
     notes.append(f"{aligned_count}/4 TF uyumlu")
 
-    # 2. RSI mesafesi: oversold (≤35) veya overbought (≥65) bölgesine yakınlık (%30 ağırlık)
-    daily_m = tf_metrics.get("1d", {})
-    rsi_daily = float(daily_m.get("rsi", 50.0) or 50.0)
-    if rsi_daily <= 30:
-        rsi_contrib = 30.0
-        notes.append(f"RSI günlük oversold ({rsi_daily:.1f})")
-    elif rsi_daily <= 40:
-        rsi_contrib = 20.0
-        notes.append(f"RSI günlük yaklaşıyor ({rsi_daily:.1f})")
-    elif rsi_daily >= 70:
-        rsi_contrib = 30.0
-        notes.append(f"RSI günlük overbought ({rsi_daily:.1f})")
-    elif rsi_daily >= 60:
-        rsi_contrib = 20.0
-        notes.append(f"RSI günlük yüksek bölge ({rsi_daily:.1f})")
-    else:
-        dist_down = rsi_daily - 30.0
-        dist_up = 70.0 - rsi_daily
-        closest = min(dist_down, dist_up)
-        rsi_contrib = max(0.0, (20.0 - closest) / 20.0 * 15.0)
-    score += rsi_contrib
+    # FAZ 1 — THE PURGE: düz RSI-seviye okuma (oversold/yaklaşıyor/overbought) ve
+    # EMA50/SMA200 yakınlık mantığı skorlamadan KALDIRILDI (gecikmeli klasik indikatörler).
+    # Sinyal olgunluğu artık TF uyumu + yapısal RSI uyumsuzluğu teyidine dayanır.
 
-    # 3. RSI divergence teyidi (%15 ağırlık)
+    # 2. RSI divergence teyidi (yapısal — korunur)
     if "POSITIVE" in divergence_daily or "NEGATIVE" in divergence_daily:
         score += 15.0
         notes.append(f"RSI uyumsuzluk: {divergence_daily}")
     elif "POSITIVE" in divergence_weekly or "NEGATIVE" in divergence_weekly:
         score += 10.0
         notes.append(f"RSI haftalık uyumsuzluk: {divergence_weekly}")
-
-    # 4. Fiyatın key MA'ya yakınlığı (%15 ağırlık)
-    ema50 = float(daily_m.get("ema50", entry) or entry)
-    sma200 = float(daily_m.get("sma200", entry) or entry)
-    if ema50 > 0:
-        dist_ema50_pct = abs(entry - ema50) / ema50 * 100.0
-        if dist_ema50_pct <= 2.0:
-            score += 15.0
-            notes.append(f"Fiyat 50 EMA yakınında (%{dist_ema50_pct:.1f})")
-        elif dist_ema50_pct <= 5.0:
-            score += 8.0
-            notes.append(f"Fiyat 50 EMA'ya yaklaşıyor (%{dist_ema50_pct:.1f})")
-    if sma200 > 0:
-        dist_sma200_pct = abs(entry - sma200) / sma200 * 100.0
-        if dist_sma200_pct <= 3.0:
-            score = min(100.0, score + 5.0)
-            notes.append(f"Fiyat 200 SMA yakınında (%{dist_sma200_pct:.1f})")
 
     score = round(min(100.0, max(0.0, score)), 1)
 
@@ -1468,6 +1425,21 @@ def _compute_signal_formation(
 
     reason = " | ".join(notes) if notes else "Yeterli yakınsama yok"
     return score, reason, eta
+
+
+def _asymmetric_usdt_d_series(state: OracleState) -> list[float] | None:
+    """Makro sentinel'in cross_asset_warnings'ından USDT.D eğim serisi kurar.
+
+    USDT.D YÜKSELİYOR → artan seri (eğim + → kripto LONG RED).
+    USDT.D DÜŞÜYOR   → azalan seri (eğim − → kripto LONG ONAY).
+    Bilinmiyor       → None (nötr onay).
+    """
+    warns = list(getattr(state, "cross_asset_warnings", None) or [])
+    if any("USDT.D YÜKSELİYOR" in str(w) for w in warns):
+        return [8.0, 8.05, 8.10, 8.15, 8.20]
+    if any("USDT.D DÜŞÜYOR" in str(w) for w in warns):
+        return [8.20, 8.15, 8.10, 8.05, 8.00]
+    return None
 
 
 async def run_quant_engine(state: OracleState) -> OracleState:
@@ -1552,6 +1524,15 @@ async def run_quant_engine(state: OracleState) -> OracleState:
         sweep_direction = str(h4_metrics.get("sweep_direction") or d1_metrics.get("sweep_direction") or "NONE")
         fvg_direction = str(h4_metrics.get("fvg_direction") or d1_metrics.get("fvg_direction") or "NONE")
 
+        # ── FAZ 2: ASİMETRİK MOTOR (Sweep+CHOCH & RSI Breakout & USDT.D) ──
+        asymmetric = asymmetric_long_signal(
+            df_local,
+            usdt_d_series=_asymmetric_usdt_d_series(state),
+            asset_close=df_local["close"] if df_local is not None else None,
+        )
+        asymmetric_fired = bool(asymmetric["signal"])
+        asymmetric_reason = str(asymmetric.get("reason", ""))
+
         trade_type = _decide_trade_type(
             weekly_bias, daily_bias, h4_bias, h1_bias,
             price_breakout=price_breakout, rsi_breakout=rsi_breakout,
@@ -1601,6 +1582,10 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 divergence_bonus += 0.05  # likidite kriptoya dönüyor → LONG onayı
             elif usdt_d_rising:
                 divergence_bonus -= 0.05  # nakde kaçış → LONG baskısı
+
+        # ── FAZ 2: Asimetrik motor onayı → skor bonusu ──
+        if asymmetric_fired:
+            divergence_bonus += 0.10  # Sweep+CHOCH & RSI Breakout & USDT.D onayı
 
         technical_unit = _technical_unit_from_timeframes(tf_metrics, divergence_bonus)
         quant_score = normalized_from_score(technical_unit * 100.0)
@@ -1704,6 +1689,12 @@ async def run_quant_engine(state: OracleState) -> OracleState:
             agent_print("QUANT_ENGINE", f"🔥 CHoCH: {h4_metrics.get('choch_direction')} | Güç: {h4_metrics.get('choch_strength')}", GREEN)
         if h4_metrics.get("rsi_trendline_break"):
             agent_print("QUANT_ENGINE", f"📈 RSI Trendline Break: {h4_metrics.get('rsi_break_direction')}", GREEN)
+        if asymmetric_fired:
+            agent_print(
+                "QUANT_ENGINE",
+                f"🎯 ASİMETRİK ONAY: {asymmetric_reason} | {asymmetric.get('macro_reason')}",
+                GREEN,
+            )
 
         return state.model_copy(
             update={
@@ -1753,6 +1744,10 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "choch_break_level": h4_metrics.get("choch_break_level"),
                 "rsi_trendline_break": h4_metrics.get("rsi_trendline_break"),
                 "rsi_break_direction": h4_metrics.get("rsi_break_direction"),
+                "asymmetric_reason": asymmetric_reason,
+                "asymmetric_fired": asymmetric_fired,
+                "asymmetric_macro_approved": bool(asymmetric.get("macro_approved")),
+                "asymmetric_rs_score": asymmetric.get("rs_score"),
                 "messages": [
                     f"[QUANT_ENGINE] tf_bias={biases} align={alignment_score:.2f} trade={trade_type} "
                     f"base_rr={long_levels['base_rr']} hist_score={historical_similarity_score:.1f} "
@@ -1761,6 +1756,8 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                     f"[DYNAMIC_TARGET] {long_levels['dynamic_trendline_target']}", # Geometrik hedef şatılı
                     levels_shuttle # Veri Şatılı güvenli mesaj kuyruğuna yükleniyor!
                 ] + ([
+                    f"[ASYMMETRIC] {asymmetric_reason} | {asymmetric.get('macro_reason')}"
+                ] if asymmetric_fired else []) + ([
                     f"[CHOCH] {h4_metrics.get('choch_direction')} @ {h4_metrics.get('choch_break_level')} | Güç: {h4_metrics.get('choch_strength')}"
                 ] if h4_metrics.get("choch_detected") else []) + ([
                     f"[RSI_TRENDLINE] {h4_metrics.get('rsi_break_direction')} kırılımı"

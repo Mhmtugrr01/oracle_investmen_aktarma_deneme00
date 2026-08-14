@@ -26,6 +26,11 @@ import yfinance as yf
 from loguru import logger
 
 from core.asset_classifier import is_crypto
+from core.asymmetric_engine import (
+    asymmetric_long_signal,
+    detect_rsi_divergence_trendline,
+    detect_sweep_choch_long,
+)
 from core.multi_tf import (
     _resample_4h_from_1h,
     analyze_multi_tf,
@@ -79,14 +84,36 @@ class OracleScanner:
         self._cluster_theme_map: dict[str, str] = {}
 
     async def start(self):
-        """Tarayıcıyı başlat — üç paralel döngü çalıştır."""
+        """Tarayıcıyı başlat — dört paralel döngü (FAZ 4: çelik yelek self-heal)."""
         self._running = True
-        await asyncio.gather(
-            self._full_scan_loop(),
-            self._watchlist_monitor_loop(),
-            self._daily_briefing_loop(),
-            self._signal_tracker_loop(),
-        )
+        loops = [
+            ("full_scan", self._full_scan_loop),
+            ("watchlist", self._watchlist_monitor_loop),
+            ("daily_briefing", self._daily_briefing_loop),
+            ("signal_tracker", self._signal_tracker_loop),
+        ]
+        await asyncio.gather(*[self._guard_loop(name, fn) for name, fn in loops])
+
+    async def _guard_loop(self, name: str, coro_factory):
+        """FAZ 4 — ÇELİK YELEK: bir döngü ölümcül hata ile çökerse Telegram'a
+        kritik bildirim gönder ve döngüyü 60 sn sonra yeniden başlat (asla sessizce ölme).
+        """
+        while self._running:
+            try:
+                await coro_factory()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"[CRITICAL] {name} döngüsü beklenmedik hatadan çöktü: {exc}")
+                try:
+                    if callable(self.bot):
+                        await self.bot(
+                            f"🚨 CRITICAL: Tarama motoru beklenmedik bir hatadan çöktü. "
+                            f"Hata: {exc}"
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+                await asyncio.sleep(60)  # self-heal: 60 sn sonra döngüyü yeniden başlat
 
     async def _signal_tracker_loop(self):
         """
@@ -179,58 +206,14 @@ class OracleScanner:
             prev_rsi = float(rsi_s.iloc[-2])
             price = float(close.iloc[-1])
 
-            # RSI bölgesi: 50-70 sağlıklı trend; sınır bölgeler; >78 aşırı alım cezası
-            if 50.0 <= rsi <= 70.0:
-                score += 20.0
-                reasons.append(f"RSI {rsi:.0f} sağlıklı trend bölgesi")
-            elif 45.0 <= rsi < 50.0 or 70.0 < rsi <= 78.0:
-                score += 10.0
-                reasons.append(f"RSI {rsi:.0f} sınır bölge")
-            if rsi > 78.0:
-                score -= 15.0
-                reasons.append(f"RSI {rsi:.0f} > 78 — aşırı alım cezası")
+            # ── FAZ 1 — THE PURGE ──
+            # Düz RSI-seviye okuma, EMA21/EMA50 boğa düzeni, SMA200 ve MACD histogram
+            # mantığı skorlama/neden üretiminden KALDIRILDI (gecikmeli klasik indikatörler).
+            # Sadece RSI momentum eğimi (yükseliyor) korunur; asıl yapısal teyit
+            # (sweep/divergence/CHOCH/trendline-kırılımı) FAZ 2 motorunda gelecek.
             if rsi > prev_rsi:
                 score += 8.0
                 reasons.append("RSI yükseliyor")
-
-            # EMA yapısı (boğa düzeni)
-            ema21 = ta.ema(close, length=21)
-            ema50 = ta.ema(close, length=50)
-            if (
-                ema21 is not None and ema50 is not None
-                and not ema21.dropna().empty and not ema50.dropna().empty
-            ):
-                e21 = float(ema21.iloc[-1])
-                e50 = float(ema50.iloc[-1])
-                if price > e21 > e50:
-                    score += 20.0
-                    reasons.append("Fiyat>EMA21>EMA50 (boğa düzeni)")
-                elif price > e50:
-                    score += 8.0
-
-            # Uzun vade yapısı
-            sma200 = ta.sma(close, length=200)
-            if sma200 is not None and not sma200.dropna().empty:
-                if price > float(sma200.iloc[-1]):
-                    score += 10.0
-                    reasons.append("Fiyat>SMA200 (uzun vade yukarı)")
-            else:
-                score += 5.0
-
-            # MACD momentum
-            macd_df = ta.macd(close, fast=12, slow=26, signal=9)
-            if macd_df is not None and not macd_df.empty:
-                hist_col = [col for col in macd_df.columns if col.lower().startswith("macdh")]
-                hist_col = hist_col or [macd_df.columns[-1]]
-                hist_now = float(macd_df[hist_col[0]].iloc[-1])
-                hist_prev = float(macd_df[hist_col[0]].iloc[-2])
-                if hist_now > 0 and hist_now > hist_prev:
-                    score += 15.0
-                    reasons.append("MACD hist pozitif ve büyüyor")
-                elif hist_now > 0:
-                    score += 8.0
-                else:
-                    score -= 5.0
 
             # VWAP (sıralı DatetimeIndex gerektirir — copy ile garanti altına al)
             try:
@@ -452,7 +435,20 @@ class OracleScanner:
         min_score = float(self.scan_config.get("prefilter_min_score", 30.0))
         sem = asyncio.Semaphore(concurrency)
         candidates: list[dict] = []
-        stats = {"scanned": 0, "trend": 0, "dip": 0, "none": 0, "failed": 0}
+        # FAZ 3 — eleme kategorileri (makro / yapısal / momentum veto sayaçları)
+        stats = {
+            "scanned": 0, "trend": 0, "dip": 0, "none": 0, "failed": 0,
+            "macro_veto": 0, "structural_veto": 0, "momentum_veto": 0, "passed": 0,
+        }
+        usdt_rising = False
+        if self._last_regime is not None:
+            try:
+                usdt_rising = (
+                    str(getattr(getattr(self._last_regime, "dominance", None), "usdt_d_trend", {}).get("1d"))
+                    == "RISING"
+                )
+            except Exception:
+                usdt_rising = False
 
         async def _probe(symbol: str) -> None:
             async with sem:
@@ -474,14 +470,25 @@ class OracleScanner:
                 try:
                     res = self._score_prefilter_candidate(df_1d, df_4h, symbol)
                     stats["scanned"] += 1
-                    if res["score"] >= min_score and res["tier"] != "NONE":
+                    passed = res["score"] >= min_score and res["tier"] != "NONE"
+                    if passed:
                         candidates.append({"symbol": symbol, **res})
                         if res["tier"] == "TREND_FOLLOWER":
                             stats["trend"] += 1
                         else:
                             stats["dip"] += 1
+                        stats["passed"] += 1
                     else:
-                        stats["none"] += 1
+                        # FAZ 3 — şeffaflık: elenen varlık hangi veto ile düştü?
+                        veto = self._categorize_elimination(symbol, df_1d, df_4h, usdt_rising)
+                        if veto == "macro":
+                            stats["macro_veto"] += 1
+                        elif veto == "structural":
+                            stats["structural_veto"] += 1
+                        elif veto == "momentum":
+                            stats["momentum_veto"] += 1
+                        else:
+                            stats["none"] += 1
                 except Exception as exc:
                     # Skorlama hatası da sessizce yutulmaz: sembol loglanır.
                     stats["failed"] += 1
@@ -505,6 +512,32 @@ class OracleScanner:
             f"{stats['failed']} varlık veri hatası (çekilemedi/yetersiz) — derin analize geçiyor."
         )
         return {"candidates": sorted_cands, "stats": stats}
+
+    @staticmethod
+    def _categorize_elimination(symbol: str, df_1d, df_4h, usdt_rising: bool) -> str:
+        """FAZ 3 — elenen varlığı tek bir veto kategorisine sınıflandır.
+
+        Öncelik sırası (kullanıcı hunisiyle aynı):
+          1. Makro Veto      : kripto ve USDT.D yükseliyor → para dolara kaçıyor.
+          2. Yapısal Veto    : Sweep+CHOCH yok.
+          3. Momentum Veto   : RSI uyumsuzluğu/kırılımı yok.
+        Dönüş: "macro" | "structural" | "momentum" | "none"
+        """
+        if is_crypto(symbol) and usdt_rising:
+            return "macro"
+        df_m = df_4h if (df_4h is not None and len(df_4h) >= 40) else df_1d
+        if df_m is None or len(df_m) < 30:
+            return "none"
+        try:
+            m1 = detect_sweep_choch_long(df_m)
+            if not m1["signal"]:
+                return "structural"
+            m2 = detect_rsi_divergence_trendline(df_m)
+            if not m2["signal"]:
+                return "momentum"
+        except Exception:  # noqa: BLE001
+            return "none"
+        return "none"
 
     # =========================================================================
     # ── ANA TARAMA METODU (4 KATMANLI PİPELINE) ──
@@ -632,6 +665,15 @@ class OracleScanner:
         global _GLOBAL_SCAN_ACTIVE
         if _GLOBAL_SCAN_ACTIVE or self._scan_in_progress:
             logger.info("[SCANNER] Tarama zaten aktif — global çift tetikleme koruması (guard).")
+            # Kullanıcıya net mesaj: yeni tarama başlatılmaz.
+            try:
+                if callable(self.bot):
+                    await self.bot(
+                        "⏳ Tarama şu an aktif — lütfen mevcut taramanın bitmesini bekleyin. "
+                        "(Duplike sinyal/rapor engellendi.)"
+                    )
+            except Exception:  # noqa: BLE001
+                pass
             return
         _GLOBAL_SCAN_ACTIVE = True
         self._scan_in_progress = True
@@ -762,7 +804,8 @@ class OracleScanner:
                         self._log_elimination(asset, f"pipeline timeout ({per_asset_timeout}s)")
                         continue
                     except Exception as exc:
-                        logger.error(f"[SCANNER FAIL-SAFE] {asset} pipeline hatası: {exc}")
+                        # FAZ 4 — sessiz ölüm yok: hata loglanır, döngü sıradaki varlığa geçer.
+                        logger.error(f"[ERROR] {asset} işlenemedi: {exc}")
                         self._log_elimination(asset, f"pipeline hatası: {str(exc)[:80]}")
                         continue
                     finally:
@@ -786,10 +829,17 @@ class OracleScanner:
 
                         opportunities.append(result)
                         self._scan_progress["found"] = len(opportunities)
-                        logger.info(
-                            f"[SCANNER] FIRSAT ONAYLANDI: {result.get('asset')} → "
-                            f"{result.get('signal')} (skor: {result.get('composite_pct', 0)}%)"
-                        )
+                        _asym = result.get("asymmetric_reason") or ""
+                        if _asym:
+                            logger.info(
+                                f"[SCANNER] FIRSAT ONAYLANDI: {result.get('asset')} → "
+                                f"{result.get('signal')} (Sebep: {_asym})"
+                            )
+                        else:
+                            logger.info(
+                                f"[SCANNER] FIRSAT ONAYLANDI: {result.get('asset')} → "
+                                f"{result.get('signal')} (skor: {result.get('composite_pct', 0)}%)"
+                            )
                         await self._record_opportunity(run_id, result, regime)
             finally:
                 heartbeat_task.cancel()
@@ -801,6 +851,8 @@ class OracleScanner:
             # ── KATMAN 3: TESLİMAT (Digest v2) ──────────────────────────────
             await self._send_opportunity_digest(opportunities, regime)
             await self._send_elimination_summary(self._elimination_log, len(candidates))
+            # FAZ 3: Şeffaflık raporu (makro/yapısal/momentum veto + geçenler)
+            await self._send_scan_transparency_report(started, len(all_assets), pf_stats, opportunities)
             status = "done" if opportunities else "empty"
             await store.finish_run(run_id, status, len(candidates), len(opportunities))
             self._last_full_scan = datetime.now(timezone.utc)
@@ -895,6 +947,12 @@ class OracleScanner:
         overnight_end = int(self.scan_config.get("overnight_end_hour", 9))
 
         await asyncio.sleep(45)  # başlangıç stabilizasyonu
+        # FAZ 4 — Safe-Start teyidi: restart'ta zamanlayıcı kaybolmaz; kaçırılan
+        # tarama ya pencere içinde ya da FAZ A güvenlik ağıyla otomatik telafi edilir.
+        logger.info(
+            f"[SCANNER] Safe-Start aktif: {overnight_start:02d}:00-{overnight_end:02d}:00 "
+            f"penceresi izleniyor; restart'ta kaçırılan tarama otomatik telafi edilir."
+        )
         while self._running:
             try:
                 now = datetime.now(tz)
@@ -972,12 +1030,16 @@ class OracleScanner:
                 return None
 
             if signal in ["STRONG_BUY", "ACCUMULATE", "STRONG_SELL", "SHORT", "REDUCE", "LONG_FIRSAT", "SHORT_FIRSAT"]:
+                asym_reason = state_data.get("asymmetric_reason") or ""
                 return {
                     "asset": asset,
                     "category": category,
                     "signal": signal,
                     "composite_pct": int(abs(composite) * 100),
                     "base_rr": base_rr,
+                    "asymmetric_reason": asym_reason,
+                    "asymmetric_macro_approved": state_data.get("asymmetric_macro_approved"),
+                    "asymmetric_rs_score": state_data.get("asymmetric_rs_score"),
                     "t1": state_data.get("t1"),
                     "t2": state_data.get("t2"),
                     "t3": state_data.get("t3"),
@@ -1175,16 +1237,30 @@ class OracleScanner:
         }
 
         for opp in sorted(opportunities, key=lambda x: x.get("composite_pct", 0), reverse=True):
-            emoji = signal_emojis.get(opp.get("signal", ""), "⚪")
-            rr = f"R:R 1:{opp['base_rr']:.1f}" if opp.get("base_rr") else ""
-            lines.append(
-                f"🔥 {opp.get('asset')} — {opp.get('signal')} | Kompozit Skor: "
-                f"{opp.get('composite_pct')}% | {rr}"
+            direction = (
+                "LONG"
+                if opp.get("signal") in ("STRONG_BUY", "ACCUMULATE", "LONG_FIRSAT")
+                else "SHORT"
             )
-            # 🔎 NEDEN: bu varlık adaya nasıl seçildi? (FASE B — şeffaf gerekçe)
-            reason = opp.get("selection_reason")
-            if reason:
-                lines.append(f"   🔎 NEDEN: {reason}")
+            asym = opp.get("asymmetric_reason") or ""
+            reason = asym if asym else (opp.get("selection_reason") or "Yapısal sinyal teyidi")
+            lines.append(f"🔥 {opp.get('asset')} — ASİMETRİK FIRSAT ({direction})")
+            lines.append(f"🔎 NEDEN: {reason}")
+
+            # Makro onay (FAZ 3 şeffaflık — USDT.D)
+            mac = opp.get("asymmetric_macro_approved")
+            if mac is not None:
+                mk = "✅ Makro Onay: USDT.D Düşüşte (Sinyal Hizalı)" if mac else "⚠️ Makro Onay: USDT.D Yükselişte (baskı)"
+                lines.append(f"   {mk}")
+
+            # Liderlik + RS skor (FAZ 3 şeffaflık)
+            theme = opp.get("cluster_theme")
+            rank = opp.get("cluster_leader_rank")
+            rs = opp.get("asymmetric_rs_score")
+            leader = "⭐ Küme Lideri" if rank == 1 else (f"Küme #{rank}" if rank else "")
+            rs_txt = f"RS Score: {rs:.3f}" if rs is not None else ""
+            if theme or leader or rs_txt:
+                lines.append("   " + " · ".join(p for p in (theme or "", leader, rs_txt) if p))
             if opp.get("mtf_summary"):
                 lines.append(f"   {opp['mtf_summary']}")
             # 📗 FİYAT BAZLI İŞLEM PLANI (FASE D — Digest v3)
@@ -1223,12 +1299,6 @@ class OracleScanner:
                         lines.append(f"   {pl}")
             except Exception as exc:
                 logger.warning(f"[DIGEST] İşlem planı üretilemedi ({opp.get('asset')}): {exc}")
-            # FAZ B: küme teması + göreli güç lider rozeti
-            theme = opp.get("cluster_theme")
-            rank = opp.get("cluster_leader_rank")
-            if theme:
-                leader = "⭐ Küme Lideri" if rank == 1 else (f"Küme #{rank}" if rank else "")
-                lines.append(f"   🧩 {theme}" + (f" — {leader}" if leader else ""))
             corr = opp.get("_correlation", {})
             if corr.get("validity_text"):
                 marker = "✅" if corr.get("aligned") else "⚠️"
@@ -1242,6 +1312,183 @@ class OracleScanner:
         )
 
         await self.bot("\n".join(lines))
+
+    async def _send_scan_transparency_report(self, started: float, total: int, pf_stats: dict, opportunities: list):
+        """FAZ 3 — ŞEFFAFLIK RAPORU: her varlığın hangi aşamada elendiğini gösterir.
+
+        Format:
+          🔍 ORACLE TARAMA TAMAMLANDI (Süre: Xs)
+          📊 Toplam Taranan: 93 Varlık
+          📉 ELEME RAPORU:
+          ❌ Makro Veto (USDT.D uyumsuz): 45 Varlık
+          ❌ Yapısal Veto (Sweep+CHOCH yok): 32 Varlık
+          ❌ Momentum Veto (RSI Uyumsuzluğu/Kırılım yok): 14 Varlık
+          ✅ Filtreyi Geçenler: 2 Varlık (ASELS, BTC)
+        """
+        try:
+            dur = int(time.monotonic() - started)
+            passed_names = [str(o.get("asset")) for o in opportunities if o.get("asset")]
+            lines = [
+                "🔍 ORACLE TARAMA TAMAMLANDI",
+                f"📊 Toplam Taranan: {total} Varlık (Süre: {dur}s)",
+                "",
+                "📉 ELEME RAPORU:",
+                f"❌ Makro Veto (USDT.D uyumsuz): {int(pf_stats.get('macro_veto', 0))} Varlık",
+                f"❌ Yapısal Veto (Sweep+CHOCH yok): {int(pf_stats.get('structural_veto', 0))} Varlık",
+                f"❌ Momentum Veto (RSI Uyumsuzluğu/Kırılım yok): {int(pf_stats.get('momentum_veto', 0))} Varlık",
+                "✅ Filtreyi Geçenler: "
+                + (f"{len(passed_names)} Varlık ({', '.join(passed_names)})" if passed_names else "0 Varlık"),
+            ]
+            await self.bot("\n".join(lines))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[SCANNER] Şeffaflık raporu gönderilemedi: {exc}")
+
+    async def live_dry_run(self, symbols: list[str]) -> str:
+        """
+        FAZ 4 — CANLI ATIŞ TESTİ (LIVE DRY-RUN).
+        Gerçek ccxt/yfinance OHLCV + Makro USDT.D ile FAZ 2'nin 3 asimetrik
+        motorunu (Sweep+CHOCH, RSI Divergence/Trendline, RS+USDT.D) çalıştırır
+        ve şeffaflık eleme raporu üretir. LLM pipeline YOK (saf motor — hızlı).
+
+        Dönüş: Telegram'a gönderilen rapor metni (log kanıtı için de döner).
+        """
+        t0 = time.monotonic()
+        stats = {"scanned": 0, "macro_veto": 0, "structural_veto": 0,
+                 "momentum_veto": 0, "passed": 0, "failed": 0}
+        lines: list[str] = [
+            "🔬 ORACLE CANLI ATIŞ TESTİ (LIVE DRY-RUN)",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        ]
+
+        # ── MAKRO: USDT.D (gerçek rejim motoru) ──────────────────────────
+        usdt_rising = False
+        usdt_d_now = None
+        try:
+            regime = await get_regime_snapshot(force=True)
+            self._last_regime = regime
+            usdt_d_now = float(getattr(regime, "usdt_d", None) or 0.0)
+            usdt_rising = (
+                str(getattr(getattr(regime, "dominance", None), "usdt_d_trend", {}).get("1d"))
+                == "RISING"
+            )
+            lines.append(
+                f"🌐 MAKRO: USDT.D {usdt_d_now:.2f}% | Rejim: {regime.primary_trend}"
+                f" | Risk: {regime.risk_appetite:.2f}"
+            )
+        except Exception as exc:  # noqa: BLE001
+            lines.append(f"🌐 MAKRO: alınamadı ({str(exc)[:60]}) — nötr kabul")
+        # Motor 3 için USDT.D serisi (trend yönünden; yükselen → RED, düşen → ONAY)
+        usdt_d_series = [8.00, 8.05, 8.10, 8.15, 8.20] if usdt_rising else [8.20, 8.15, 8.10, 8.05, 8.00]
+
+        # ── BTC benchmark (RS skoru için) ────────────────────────────────
+        btc_close = None
+        try:
+            df_btc = await fetch_crypto_ohlcv("BTC/USDT", timeframe="1d", limit=60)
+            if df_btc is not None and not df_btc.empty:
+                btc_close = df_btc["close"].astype(float)
+            del df_btc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[CANLI_TEST] BTC benchmark çekilemedi: {exc}")
+
+        lines.append("")
+        lines.append(f"📡 CANLI VERİ + ASİMETRİK MOTOR TARAMASI ({len(symbols)} Varlık):")
+        passed_names: list[str] = []
+        for sym in symbols:
+            try:
+                df_1d, df_4h = await self._fetch_prefilter_data(sym)
+                if df_1d is None or df_1d.empty or len(df_1d) < 30:
+                    stats["failed"] += 1
+                    logger.error(f"[ERROR] {sym} işlenemedi: 1D veri yetersiz/boş")
+                    lines.append(f"  ❌ {sym:<10} → VERİ HATASI (yetersiz veri)")
+                    continue
+                df_m = df_4h if (df_4h is not None and len(df_4h) >= 40) else df_1d
+                is_c = is_crypto(sym)
+                asset_close = df_1d["close"].astype(float)
+                res = asymmetric_long_signal(
+                    df_m,
+                    usdt_d_series=(usdt_d_series if is_c else None),
+                    btc_close=(btc_close if is_c else None),
+                    asset_close=asset_close,
+                )
+                m1 = bool(res["motors"]["sweep_choch"]["signal"])
+                m2 = bool(res["motors"]["rsi_div"]["signal"])
+                macro_ok = bool(res["macro_approved"])
+
+                # Eleme kategorisi (huni: makro → yapısal → momentum)
+                if is_c and usdt_rising:
+                    cat = "macro"
+                elif not m1:
+                    cat = "structural"
+                elif not m2:
+                    cat = "momentum"
+                elif is_c and not macro_ok:
+                    cat = "macro"
+                else:
+                    cat = "passed"
+
+                stats["scanned"] += 1
+                rs_txt = f"{res['rs_score']:+.3f}" if res.get("rs_score") is not None else "-"
+
+                if cat == "passed":
+                    stats["passed"] += 1
+                    passed_names.append(sym)
+                    lines.append(
+                        f"  🟢 {sym:<10} → FIRSAT: Sweep+CHOCH ✅ | RSI Breakout ✅"
+                        f" | Makro {'✅' if macro_ok else '⚠️'} | RS {rs_txt}"
+                    )
+                    logger.info(
+                        f"[SCANNER] FIRSAT ONAYLANDI: {sym} → LONG_FIRSAT "
+                        f"(Sebep: Sweep+CHOCH & RSI Breakout)"
+                    )
+                elif cat == "macro":
+                    stats["macro_veto"] += 1
+                    lines.append(
+                        f"  🔴 {sym:<10} → Makro Veto (USDT.D yükselişte — para dolara kaçıyor)"
+                    )
+                elif cat == "structural":
+                    stats["structural_veto"] += 1
+                    lines.append(f"  🔴 {sym:<10} → Yapısal Veto (Sweep+CHOCH yok)")
+                else:
+                    stats["momentum_veto"] += 1
+                    lines.append(f"  🔴 {sym:<10} → Momentum Veto (RSI uyumsuzluk/kırılım yok)")
+            except Exception as exc:  # noqa: BLE001
+                stats["failed"] += 1
+                logger.error(f"[ERROR] {sym} işlenemedi: {exc}")
+                lines.append(f"  ❌ {sym:<10} → İŞLENEMEDİ ({str(exc)[:50]})")
+                continue
+            finally:
+                try:
+                    del df_1d
+                except UnboundLocalError:
+                    pass
+                try:
+                    if df_4h is not None:
+                        del df_4h
+                except UnboundLocalError:
+                    pass
+                gc.collect()  # 512MB RAM disiplini
+
+        dur = int(time.monotonic() - t0)
+        lines += [
+            "",
+            f"📉 ELEME RAPORU (Süre: {dur}s):",
+            f"  ❌ Makro Veto (USDT.D uyumsuz): {stats['macro_veto']} Varlık",
+            f"  ❌ Yapısal Veto (Sweep+CHOCH yok): {stats['structural_veto']} Varlık",
+            f"  ❌ Momentum Veto (RSI Uyumsuzluğu/Kırılım yok): {stats['momentum_veto']} Varlık",
+            "  ✅ Filtreyi Geçenler: "
+            + (f"{len(passed_names)} Varlık ({', '.join(passed_names)})" if passed_names else "0 Varlık"),
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        ]
+        report = "\n".join(lines)
+        # Log kanıtı: her satırı logger'a yaz (web paneli + terminal)
+        for line in lines:
+            logger.info(f"[CANLI_TEST] {line}")
+        try:
+            if callable(self.bot):
+                await self.bot(report)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[CANLI_TEST] Rapor gönderilemedi: {exc}")
+        return report
 
     async def _send_elimination_summary(self, eliminations: list, candidates_total: int):
         """FAZ 3 — ELEME RAPORU: adayların neden elendiğini şeffaf biçimde özetler.

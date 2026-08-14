@@ -1354,6 +1354,303 @@ def test_faz_global_scan_guard():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 27. TRACKER — Series Bug'ı düzeltildi (float(Series) çökmesi)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz0_tracker_series_bug():
+    print("[27] TRACKER — Series bug'ı (float(Series) çökmesi) düzeltildi")
+    from core.signal_tracker import _last_close_price
+    import pandas as pd
+
+    # 1) Normal Series → skaler
+    df1 = pd.DataFrame({"Close": [100.0, 101.0, 102.0]})
+    val = _last_close_price(df1)
+    check("normal Close → skaler", val == 102.0, f"got {val!r}")
+
+    # 2) MultiIndex sütunlu Close (yfinance'in patlattığı durum) → skaler
+    cols = pd.MultiIndex.from_product([["Close"], ["MU"]])
+    df3 = pd.DataFrame([[100.0], [101.0], [102.0]], columns=cols)
+    val3 = _last_close_price(df3)
+    check("MultiIndex Close → skaler (ilk sütun)", val3 == 102.0, f"got {val3!r}")
+
+    # 3) Boş → None (çökmez)
+    val4 = _last_close_price(pd.DataFrame())
+    check("boş df → None", val4 is None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 28. FAZ 1 — THE PURGE (EMA/MACD/düz-RSI skorlamadan kaldırıldı)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz1_purge():
+    print("[28] FAZ 1 — THE PURGE (EMA/MACD/düz-RSI kaldırıldı)")
+    src_scanner = Path("core/scanner.py").read_text(encoding="utf-8")
+    check("'Fiyat>EMA21>EMA50' yok", "Fiyat>EMA21>EMA50" not in src_scanner)
+    check("'MACD hist pozitif' yok", "MACD hist pozitif" not in src_scanner)
+    check("'sağlıklı trend bölgesi' yok", "sağlıklı trend bölgesi" not in src_scanner)
+    check("'Fiyat>SMA200' yok", "Fiyat>SMA200" not in src_scanner)
+
+    from agents.quant_engine import _classify_bias
+
+    # EMA50>SMA200 golden cross eskiden BULLISH döndürüyordu → artık değil
+    got = _classify_bias(110, 105, 100, 60)
+    check("golden cross bias kalktı (BULLISH değil)", got == "NEUTRAL", f"got {got}")
+    got2 = _classify_bias(100, 105, 110, 40)
+    check("death cross bias kalktı (BEARISH değil)", got2 == "NEUTRAL", f"got {got2}")
+    # Yapısal/piyasa yapısı + temel RSI bölgesi bias'ı korunur
+    got3 = _classify_bias(110, 105, 100, 30, "BULLISH_STRUCTURE")
+    check("yapısal bias korunur", got3 == "BULLISH", f"got {got3}")
+    got4 = _classify_bias(100, 105, 110, 30)
+    check("temel RSI oversold korunur", got4 == "OVERSOLD", f"got {got4}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 29. FAZ 2 — ASİMETRİK MOTOR (Sweep+CHOCH & RSI Breakout & USDT.D)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz2_asymmetric_motors():
+    print("[29] FAZ 2 — asimetrik motor (3 motor + mock kanıt)")
+    from core.asymmetric_engine import (
+        asymmetric_long_signal,
+        detect_rsi_divergence_trendline,
+        detect_sweep_choch_long,
+        usdt_d_macro_filter,
+    )
+    from test_asymmetric_engine import build_mock_ohlcv
+
+    df = build_mock_ohlcv()
+    usdt_down = [8.20, 8.15, 8.10, 8.05, 8.00]  # USDT.D DÜŞÜYOR → onay
+    usdt_up = [8.00, 8.05, 8.10, 8.15, 8.20]    # USDT.D YÜKSELİYOR → red
+
+    m1 = detect_sweep_choch_long(df)
+    check("M1 sweep+choch tetiklendi", bool(m1["sweep"] and m1["choch"]), f"got {m1}")
+    m2 = detect_rsi_divergence_trendline(df)
+    check("M2 divergence+breakout", bool(m2["divergence"] and m2["breakout"]), f"got {m2}")
+    m3 = usdt_d_macro_filter(usdt_down)
+    check("M3 USDT.D düşüş → onay", m3["approved"] is True, f"got {m3}")
+    m3_up = usdt_d_macro_filter(usdt_up)
+    check("USDT.D yükseliş → red", m3_up["approved"] is False, f"got {m3_up}")
+
+    comb = asymmetric_long_signal(df, usdt_d_series=usdt_down)
+    check("birleşik sinyal tetiklendi", comb["signal"] is True, f"got {comb['reason']}")
+    check("neden 'Sweep+CHOCH & RSI Breakout'",
+          comb["reason"] == "Sweep+CHOCH & RSI Breakout", f"got {comb['reason']}")
+
+    comb_rej = asymmetric_long_signal(df, usdt_d_series=usdt_up)
+    check("USDT.D yukarı → sinyal red",
+          comb_rej["signal"] is False and comb_rej["macro_approved"] is False,
+          f"got macro_approved={comb_rej['macro_approved']}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 30. FAZ 3 — ŞEFFAFLIK: sahte metrikler yok + eleme raporu + kategorizasyon
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz3_transparency():
+    print("[30] FAZ 3 — şeffaflık (sahte metrik yok + eleme raporu)")
+
+    # a) MTF özetinin GERÇEK ÇIKTISINDA "Teknik teyit: X boğa vs Y ayı" yok
+    from core.multi_tf import MultiTFAnalysis, format_mtf_summary
+
+    mtf_a = MultiTFAnalysis(
+        symbol="BTC/USDT",
+        points={"1h": {"bias": "BULLISH"}, "4h": {"bias": "BULLISH"}, "1d": {"bias": "BULLISH"}},
+        signal_bias="BULLISH",
+        aligned_count=3,
+        total_count=3,
+        entry_timing="NOW",
+        validity_text="TF'ler uyumlu — boğa yönünde.",
+    )
+    out_mtf = format_mtf_summary(mtf_a, "BTC/USDT")
+    check("MTF çıktısında 'Teknik teyit' yok", "Teknik teyit" not in out_mtf)
+    check("MTF çıktısında 'boğa vs' yok", "boğa vs" not in out_mtf)
+    check("MTF çıktısında 'ayı sinyali' yok", "ayı sinyali" not in out_mtf)
+
+    # b) Digest yeni formata geçti (ASİMETRİK FIRSAT), sahte yüzde başlığı yok
+    src_scanner = Path("core/scanner.py").read_text(encoding="utf-8")
+    check("'ASİMETRİK FIRSAT' var", "ASİMETRİK FIRSAT" in src_scanner)
+    check("digest'te 'Kompozit Skor:' başlığı yok", "| Kompozit Skor:" not in src_scanner)
+
+    # c) _categorize_elimination: makro / yapısal veto mantığı
+    from core.scanner import OracleScanner
+    from test_asymmetric_engine import build_mock_ohlcv
+
+    sc = OracleScanner(None, None, {"scan_schedule": {}, "asset_universe": {}})
+    df = build_mock_ohlcv()  # Sweep+CHOCH + RSI breakout içerir
+    check("kripto + USDT.D yukarı → makro veto",
+          sc._categorize_elimination("BTC/USDT", df, df, True) == "macro")
+    # Mock'ta m1 tetiklenir; m1'i kırmak için sweep'siz rastgele veri
+    rand_df = _synth_ohlcv(n=60)
+    check("sweep yok → yapısal veto",
+          sc._categorize_elimination("BTC/USDT", rand_df, rand_df, False) == "structural")
+
+    # d) Şeffaflık raporu formatı
+    sent: list[str] = []
+
+    async def _fake_bot(msg: str):
+        sent.append(msg)
+
+    sc.bot = _fake_bot  # type: ignore[method-assign]
+    import time as _t
+    pf_stats = {"scanned": 91, "macro_veto": 45, "structural_veto": 32,
+                "momentum_veto": 14, "none": 0, "failed": 0}
+    asyncio.run(sc._send_scan_transparency_report(_t.monotonic(), 93, pf_stats,
+                                                  [{"asset": "ASELS.IS"}, {"asset": "BTC/USDT"}]))
+    msg = sent[0] if sent else ""
+    check("rapor 'ORACLE TARAMA TAMAMLANDI' içerir", "ORACLE TARAMA TAMAMLANDI" in msg)
+    check("rapor 'Makro Veto' içerir", "Makro Veto (USDT.D uyumsuz): 45" in msg)
+    check("rapor 'Yapısal Veto' içerir", "Yapısal Veto (Sweep+CHOCH yok): 32" in msg)
+    check("rapor 'Momentum Veto' içerir", "Momentum Veto (RSI Uyumsuzluğu/Kırılım yok): 14" in msg)
+    check("rapor 'Filtreyi Geçenler' içerir", "Filtreyi Geçenler: 2 Varlık (ASELS.IS, BTC/USDT)" in msg)
+
+    # e) /oracle X abort mesajındaki sahte yüzdeler temizlendi (gerçek skorlar durur)
+    from core.types import OracleState
+    from bot.telegram_handler import _format_abort_message
+
+    st = OracleState(
+        symbol="BTC/USDT",
+        macro_score=0.1,
+        quant_score=0.2,
+        fundamental_score=0.0,
+        sentiment_score=0.0,
+        confidence=0.50,
+        base_rr=2.0,
+        timeframe_biases={"1w": "NEUTRAL", "1d": "BULLISH", "4h": "BULLISH", "1h": "NEUTRAL"},
+    )
+    abort = _format_abort_message(st, "Kompozit")
+    for fake in ("Ajan Tutarlılık", "Sinyal Olgunluğu", "Tarihsel Benzerlik", "Ajan Uyumu"):
+        check(f"abort'ta '{fake}' yok", fake not in abort)
+    check("abort'ta gerçek 'Kompozit Skor' var", "Kompozit Skor" in abort)
+    check("abort'ta gerçek 'Sistem Güveni' var", "Sistem Güveni" in abort)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 31. FAZ 4 — ÇELİK YELEK: kritik çöküş bildirimi + canlı dry-run formatı
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz4_steel_vest():
+    print("[31] FAZ 4 — çelik yelek (kritik çöküş + canlı dry-run)")
+
+    # a) _guard_loop: döngü ölümcül hata ile çökerse CRITICAL mesajı + self-heal
+    import core.scanner as _scanner_mod
+    from core.scanner import OracleScanner
+
+    crit_msgs: list[str] = []
+
+    async def _fake_bot(msg: str):
+        crit_msgs.append(msg)
+
+    sc = OracleScanner(None, _fake_bot, {"scan_schedule": {}, "asset_universe": {}})
+    sc._running = True
+    calls = {"n": 0}
+
+    async def _factory():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("RAM yetersiz")
+        sc._running = False  # ikinci çağrıda döngüden çık (self-heal kanıtı)
+
+    async def _fake_sleep(_sec):
+        return None
+
+    orig_sleep = asyncio.sleep
+    asyncio.sleep = _fake_sleep  # type: ignore[assignment]
+    try:
+        asyncio.run(sc._guard_loop("full_scan", _factory))
+    finally:
+        asyncio.sleep = orig_sleep  # type: ignore[assignment]
+
+    check("guard döngüsü yeniden başladı (self-heal)", calls["n"] == 2, f"calls={calls['n']}")
+    check("CRITICAL mesajı gönderildi",
+          any("🚨 CRITICAL: Tarama motoru beklenmedik bir hatadan çöktü." in m for m in crit_msgs),
+          f"msgs={crit_msgs}")
+    check("CRITICAL hata detayı içerir", any("RAM yetersiz" in m for m in crit_msgs))
+
+    # b) live_dry_run: rapor formatı (mock veriyle, ağsız)
+    from test_asymmetric_engine import build_mock_ohlcv
+
+    sent2: list[str] = []
+
+    async def _fake_bot2(msg: str):
+        sent2.append(msg)
+
+    sc2 = OracleScanner(None, _fake_bot2, {"scan_schedule": {}, "asset_universe": {}})
+    mock_df = build_mock_ohlcv()  # M1 (Sweep+CHOCH) + M2 (RSI breakout) tetikler
+
+    async def _fake_fetch(symbol: str):
+        if "BTC" in symbol:
+            return mock_df, mock_df
+        return _synth_ohlcv(n=60), None  # sweep yok → yapısal veto
+
+    sc2._fetch_prefilter_data = _fake_fetch  # type: ignore[method-assign]
+    # BTC benchmark çekişini de mock'la (ağsız)
+    _scanner_mod.fetch_crypto_ohlcv = _fake_fetch  # type: ignore[assignment]
+
+    class _Dom:
+        usdt_d_trend = {"1d": "FALLING"}
+
+    class _R:
+        usdt_d = 8.1
+        primary_trend = "RISK_ON"
+        risk_appetite = 1.0
+        dominance = _Dom()
+
+    async def _fake_regime(force: bool = False):
+        return _R()
+
+    orig_regime = _scanner_mod.get_regime_snapshot
+    _scanner_mod.get_regime_snapshot = _fake_regime  # type: ignore[assignment]
+    try:
+        asyncio.run(sc2.live_dry_run(["BTC/USDT", "JPM"]))
+    finally:
+        _scanner_mod.get_regime_snapshot = orig_regime  # type: ignore[assignment]
+        _scanner_mod.fetch_crypto_ohlcv = __import__("tools.market_data", fromlist=["fetch_crypto_ohlcv"]).fetch_crypto_ohlcv  # type: ignore[assignment]
+
+    rep = sent2[0] if sent2 else ""
+    check("dry-run 'CANLI ATIŞ TESTİ' içerir", "CANLI ATIŞ TESTİ" in rep)
+    check("dry-run 'ELEME RAPORU' içerir", "ELEME RAPORU" in rep)
+    check("dry-run BTC FIRSAT gösterir", "FIRSAT" in rep and "BTC/USDT" in rep)
+    check("dry-run 'Filtreyi Geçenler: 1' içerir",
+          "Filtreyi Geçenler: 1 Varlık (BTC/USDT)" in rep, f"rep={rep[-300:]}")
+    check("dry-run JPM yapısal veto", "JPM" in rep and "Yapısal Veto" in rep)
+
+    # c) makro veto yolu: USDT.D yükseliyorsa kripto makro veto ile elenir
+    sent3: list[str] = []
+
+    async def _fake_bot3(msg: str):
+        sent3.append(msg)
+
+    sc3 = OracleScanner(None, _fake_bot3, {"scan_schedule": {}, "asset_universe": {}})
+    sc3._fetch_prefilter_data = _fake_fetch  # type: ignore[method-assign]
+
+    class _DomUp:
+        usdt_d_trend = {"1d": "RISING"}
+
+    class _RUp:
+        usdt_d = 8.2
+        primary_trend = "RISK_OFF"
+        risk_appetite = 0.3
+        dominance = _DomUp()
+
+    async def _fake_regime_up(force: bool = False):
+        return _RUp()
+
+    _scanner_mod.get_regime_snapshot = _fake_regime_up  # type: ignore[assignment]
+    try:
+        asyncio.run(sc3.live_dry_run(["BTC/USDT", "JPM"]))
+    finally:
+        _scanner_mod.get_regime_snapshot = orig_regime  # type: ignore[assignment]
+
+    rep3 = sent3[0] if sent3 else ""
+    check("USDT.D yükselirken BTC makro veto", "Makro Veto (USDT.D yükselişte" in rep3, f"rep={rep3[-200:]}")
+
+    # d) FAZ 4 kod varlığı: live_dry_run metodu + komut kaydı + CRITICAL şablonu
+    src_scanner = Path("core/scanner.py").read_text(encoding="utf-8")
+    src_main = Path("main.py").read_text(encoding="utf-8")
+    src_bot = Path("bot/telegram_handler.py").read_text(encoding="utf-8")
+    check("scanner'da 'live_dry_run' var", "async def live_dry_run" in src_scanner)
+    check("scanner'da '_guard_loop' var", "async def _guard_loop" in src_scanner)
+    check("main.py'de CRITICAL şablonu var", "🚨 CRITICAL: Tarama motoru beklenmedik bir hatadan çöktü." in src_main)
+    check("bot'ta 'test_canli_tarama' komutu kayıtlı", "test_canli_tarama" in src_bot)
+    check("bot'ta '[ERROR]' izolasyonu var", "[ERROR]" in src_scanner)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ANA
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
@@ -1385,6 +1682,11 @@ def main():
     test_faz0_coincap_dominance()
     test_faz_symbol_normalization()
     test_faz_global_scan_guard()
+    test_faz0_tracker_series_bug()
+    test_faz1_purge()
+    test_faz2_asymmetric_motors()
+    test_faz3_transparency()
+    test_faz4_steel_vest()
     dur = time.time() - t0
     print(f"\n══════ SONUÇ: {_OK} geçti, {_FAIL} başarısız ({dur:.1f}s) ══════")
     sys.exit(1 if _FAIL else 0)

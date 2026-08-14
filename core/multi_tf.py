@@ -304,18 +304,8 @@ def aggregate_mtf_points(
         analysis.validity_tf = "1h"
         analysis.validity_text = "TF'ler karışık — net yön yok, yüksek TF teyidi bekle."
 
-    # ── FASE E: teyit sayacı geçerlilik metnine eklenir ─────────────────────
-    if analysis.signal_bias != "NEUTRAL":
-        if analysis.bull_confirmations > analysis.bear_confirmations:
-            analysis.validity_text += (
-                f" Teknik teyit: {analysis.bull_confirmations} boğa "
-                f"vs {analysis.bear_confirmations} ayı sinyali."
-            )
-        elif analysis.bear_confirmations > analysis.bull_confirmations:
-            analysis.validity_text += (
-                f" Teknik teyit: {analysis.bear_confirmations} ayı "
-                f"vs {analysis.bull_confirmations} boğa sinyali."
-            )
+    # FAZ 3 — THE PURGE: "Teknik teyit: X boğa vs Y ayı sinyali" gibi çöp
+    # gösterge sayımları çıktıdan KALDIRILDI (gerçek fiyat planına sadık kalınır).
 
     return analysis
 

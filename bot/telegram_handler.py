@@ -255,12 +255,6 @@ def _format_abort_message(state: OracleState, reason: str) -> str:
         warning_lines = "\n".join(f"  • {w}" for w in warnings[:3])
         warning_text = f"\n\n⚠️ UYARILAR:\n{warning_lines}"
 
-    hist_bias = state.pattern_outcome_bias or ""
-    hist_score = getattr(state, "historical_similarity_score", None)
-    hist_text = ""
-    if hist_bias and hist_score is not None:
-        hist_text = f"\n🔄 Tarihsel Benzerlik: {int(hist_score)}/100 → {hist_bias}"
-
     if "KOMPOZİT" in reason or "Kompozit" in reason or composite < min_composite:
         neden = (
             f"Kompozit skor {composite_pct}% (minimum {int(min_composite * 100)}% gerekli). "
@@ -281,27 +275,7 @@ def _format_abort_message(state: OracleState, reason: str) -> str:
     else:
         neden = reason
 
-    alignment_tf_count = int(alignment * 4)
-    consistency_pct = int((1 - min(consensus_variance, 1.0)) * 100)
     rr_display = f"{base_rr:.2f}" if base_rr is not None else "N/A"
-
-    # Pre-signal formation bilgisi
-    formation_score = getattr(state, "signal_formation_score", None)
-    formation_reason = getattr(state, "signal_formation_reason", None)
-    formation_eta = getattr(state, "signal_eta_estimate", None)
-    quality_stars = getattr(state, "signal_quality_stars", None)
-    stars_str = ("★" * quality_stars + "☆" * (5 - quality_stars)) if quality_stars else ""
-
-    formation_block = ""
-    if formation_score is not None:
-        if formation_score >= 60:
-            formation_block = (
-                f"\n\n⚡ SİNYAL OLUŞUYOR ({formation_score:.0f}/100):\n"
-                f"  {formation_reason or ''}\n"
-                f"  ⏱ Tahmini: {formation_eta or ''}"
-            )
-        else:
-            formation_block = f"\n\n📐 Sinyal Olgunluğu: {formation_score:.0f}/100 — {formation_eta or 'Henüz uzak'}"
 
     msg = f"""🔔 OLYMPUS ORACLE — ANALİZ TAMAMLANDI
 
@@ -314,8 +288,6 @@ def _format_abort_message(state: OracleState, reason: str) -> str:
 📊 MEVCUT DURUM:
     Kompozit Skor : {composite_pct}%  (eşik: {int(min_composite * 100)}%)
     Sistem Güveni : {confidence_pct}%  (eşik: {int(min_confidence * 100)}%)
-  Ajan Uyumu    : {alignment_pct}%  ({alignment_tf_count}/4 TF hizalı)
-  Ajan Tutarlılık: {consistency_pct}%  (yüksek = iyi)
     Ajan Skorları  : Makro {state.macro_score:+.2f} | Quant {state.quant_score:+.2f} | Fundamental {state.fundamental_score:+.2f} | Sentiment {state.sentiment_score:+.2f}
 """
 
@@ -332,12 +304,9 @@ def _format_abort_message(state: OracleState, reason: str) -> str:
         f"  Günlük   → {daily}\n"
         f"  4 Saatlik → {h4}\n"
         f"  1 Saatlik → {h1}"
-        f"{hist_text}"
-        f"{formation_block}"
         f"{warning_text}\n\n"
         "💡 CEO NOTU:\n"
         f'"Piyasa şu an çatışmalı sinyaller üretiyor. '
-        f"{('Tarihsel döngü benzerliği iyimser işaret veriyor ancak teknik yapı henüz hazır değil. ' if 'BULLISH' in hist_bias else '')}"
         "Sistem minimum confluence eşiğine ulaşılana kadar bekliyor. "
         "Alım bölgesi oluştuğunda otomatik bildirim gelecek.\"\n\n"
         "⏳ DURUM: İzlemeye devam ediliyor.\n"
@@ -781,6 +750,48 @@ class TelegramHandler:
             logger.error(f"[TARAMA] Tarama başlatılamadı: {exc}")
             await update.effective_message.reply_text(f"Tarama başlatma hatası: {exc}")
 
+    async def command_test_canli_tarama(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """FAZ 4 — CANLI ATIŞ TESTİ: 5 majör varlık, gerçek API verisi + 3 motor."""
+        if await self._deny_if_unauthorized(update):
+            return
+        if not update.effective_message:
+            return
+        chat_id = update.effective_chat.id
+        await update.effective_message.reply_text(
+            "🔬 ORACLE CANLI ATIŞ TESTİ başlatılıyor...\n"
+            "5 majör varlık (BTC/ETH/SOL/USDT, JPM, NVDA) gerçek ccxt + yfinance "
+            "verisiyle 3 asimetrik motor + şeffaflık raporundan geçirilecek. (~1-2 dk)"
+        )
+        try:
+            from core.config import load_oracle_config
+            from core.scanner import OracleScanner
+
+            async def _sender(text: str) -> None:
+                try:
+                    await context.bot.send_message(chat_id=chat_id, text=text)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"[CANLI_TEST] Bildirim gönderilemedi: {exc}")
+
+            conf = await load_oracle_config()
+            scanner = OracleScanner(None, _sender, conf.model_dump())
+
+            async def _dry_run_task() -> None:
+                try:
+                    await scanner.live_dry_run(
+                        ["BTC/USDT", "ETH/USDT", "SOL/USDT", "JPM", "NVDA"]
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(f"[CANLI_TEST] Canlı atış testi hatası: {exc}")
+                    try:
+                        await _sender(f"⚠️ Canlı atış testi sırasında hata: {exc}")
+                    except Exception:
+                        pass
+
+            asyncio.create_task(_dry_run_task())
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"[CANLI_TEST] Başlatma hatası: {exc}")
+            await update.effective_message.reply_text(f"Canlı atış testi başlatma hatası: {exc}")
+
     async def command_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._deny_if_unauthorized(update):
             return
@@ -790,7 +801,7 @@ class TelegramHandler:
         # Yeni Signal Tracker modülünü kullan
         try:
             from core.signal_tracker import get_signal_tracker
-            
+
             tracker = get_signal_tracker()
             stats = tracker.get_statistics(days=30)
             
@@ -1041,6 +1052,7 @@ class TelegramHandler:
         app.add_handler(CommandHandler("oracle", self.command_oracle))
         app.add_handler(CommandHandler("analiz", self.command_analiz))
         app.add_handler(CommandHandler("tarama", self.command_tarama))
+        app.add_handler(CommandHandler("test_canli_tarama", self.command_test_canli_tarama))
         app.add_handler(CommandHandler("stats", self.command_stats))
         app.add_handler(CommandHandler("backtesting", self.command_backtesting))
         app.add_handler(CommandHandler("detay", self.command_detay))

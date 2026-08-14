@@ -19,6 +19,37 @@ import yfinance as yf
 from loguru import logger
 
 
+def _last_close_price(df) -> float | None:
+    """DataFrame'den SON KAPANIŞ fiyatını güvenli skaler olarak döndürür.
+
+    FAZ 0 — Series Bug'ı: yfinance bazı sürümlerde çok sütunlu/çok katmanlı
+    DataFrame döndürür; `df["Close"]` bir Series değil DataFrame olabilir ve
+    `.iloc[-1]` Series döndürür → `float(Series)` patlar. Bu helper her iki
+    durumu da (Series + DataFrame) sıkıştırıp skaler döndürür.
+    """
+    if df is None or df.empty:
+        return None
+    close = df.get("Close") if "Close" in df.columns else df.get("close")
+    if close is None:
+        close = df.get("close")
+    if close is None:
+        return None
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+    if close is None or len(close) == 0:
+        return None
+    try:
+        val = close.iloc[-1]
+        if isinstance(val, pd.Series):
+            val = val.iloc[0]
+        val = float(val)
+        if pd.isna(val):
+            return None
+        return val
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class SignalStatus(str, Enum):
     """Sinyal durumu."""
     PENDING = "pending"      # Henüz giriş yapılmadı
@@ -235,8 +266,10 @@ class SignalTracker:
             
             if data is None or data.empty:
                 return signal.status, signal.outcome, None, None, None
-            
-            current_price = float(data["Close"].iloc[-1])
+
+            current_price = _last_close_price(data)
+            if current_price is None:
+                return signal.status, signal.outcome, None, None, None
             current_time = datetime.now(timezone.utc).isoformat()
             
             # LONG pozisyon kontrolü

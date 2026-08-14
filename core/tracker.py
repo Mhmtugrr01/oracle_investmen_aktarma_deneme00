@@ -12,6 +12,30 @@ from loguru import logger
 DB_PATH = "data/portfolio.db"
 _DB_INITIALIZED = False  # Log kusan optimizasyon yığılmasını susturan Küresel Kilit!
 
+
+def _last_close_price(df) -> float | None:
+    """DataFrame'den son kapanışı güvenli skaler döndürür (FAZ 0 Series Bug'ı)."""
+    if df is None or df.empty:
+        return None
+    close = df.get("Close") if "Close" in df.columns else df.get("close")
+    if close is None:
+        close = df.get("close")
+    if close is None:
+        return None
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+    if close is None or len(close) == 0:
+        return None
+    try:
+        val = close.iloc[-1]
+        if isinstance(val, pd.Series):
+            val = val.iloc[0]
+        val = float(val)
+        return val if not pd.isna(val) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def get_db_connection():
     """Bağlantıları Paralel ve Çökmez yapmak için Kurumsal DB Süzgeci"""
     conn = sqlite3.connect(DB_PATH, timeout=30.0) # Lock olma ihtimalinde çökmeyip sırasını 30 saniye bekler.
@@ -78,8 +102,11 @@ def update_active_trades() -> None:
         ticker = asset.replace("/USDT", "").replace("/USD", "")
         try:
             df = yf.download(ticker, period="1d", interval="1m", progress=False, auto_adjust=True)
-            if df.empty: continue
-            current_price = float(df["Close"].iloc[-1])
+            if df is None or df.empty:
+                continue
+            current_price = _last_close_price(df)
+            if current_price is None:
+                continue
             status = "ACTIVE"
             pnl = 0.0
             
