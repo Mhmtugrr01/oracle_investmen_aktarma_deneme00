@@ -16,12 +16,78 @@ import yfinance as yf
 from loguru import logger
 
 from core.asset_classifier import classify_asset, is_crypto
-from core.asymmetric_engine import asymmetric_long_signal
 from core.config import load_oracle_config
 from core.console import BLUE, GREEN, agent_print, error_print
 from core.indicators import normalized_from_score
 from core.types import AgentNode, OracleState, PipelineStatus
 from tools.market_data import fetch_crypto_ohlcv
+
+
+async def ask_ai_expert_validator(
+    asset: str,
+    timeframe: str,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """KURAL 3 — AI EXPERT VETO: matematiksel adayı GERÇEK fırsat / gürültü
+    olarak yargılayan son karar merciidir.
+
+    KATI KURAL: AI cevabına "EVET" ile başlamazsa sinyal YAYINLANMAZ
+    (fail-closed: LLM erişilemezse bile veto — sahte sinyal asla geçmez).
+
+    Dönüş: {"approved": bool, "reason": str, "raw": str}
+    """
+    direction = str(data.get("direction") or "LONG").upper()
+    high = data.get("high")
+    low = data.get("low")
+    rsi_div = "Var" if data.get("rsi_div") else "Yok"
+    tl_price = data.get("tl_price")
+    current = data.get("current")
+
+    prompt = (
+        f"Sen dünyanın en iyi teknik analistisin. {asset} varlığı {timeframe} grafiğinde "
+        f"matematiksel olarak şu durumları gösteriyor: Son tepe: {high}, Son dip: {low}, "
+        f"RSI Uyumsuzluğu: {rsi_div}, Trend Çizgisi Fiyatı: {tl_price}, "
+        f"Mevcut Fiyat: {current}. Makine bunun bir {direction} asimetrik fırsat olduğunu, "
+        f"trendin kırıldığını veya kırılmak üzere olduğunu söylüyor. Fitilleri, tuzakları "
+        f"(fakeout) ve bu veriyi hesaba katarak; bu GERÇEK VE KALİTELİ bir fırsat mı, "
+        f"yoksa bir piyasa gürültüsü mü? Sadece 'EVET' veya 'HAYIR' ile başla ve "
+        f"1 cümlelik nedenini yaz."
+    )
+    # KANIT: promptu terminal loguna yaz (kullanıcı AI'ya giden istemi görmeli)
+    logger.info(f"[AI_VETO] PROMPT → {prompt}")
+
+    try:
+        from tools.llm_engine import LlmEngine
+
+        raw = await asyncio.wait_for(
+            LlmEngine().invoke_text(
+                system_prompt=(
+                    "Sen disiplinli bir kuant teknik analistisin. Cevabın MUTLAKA "
+                    "'EVET' veya 'HAYIR' ile başlamalı, sonra 1 cümle neden gelmeli."
+                ),
+                user_prompt=prompt,
+            ),
+            timeout=25.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            f"[AI_VETO] {asset} {timeframe} LLM erişilemedi ({type(exc).__name__}) "
+            f"→ fail-closed VETO."
+        )
+        return {
+            "approved": False,
+            "reason": f"AI uzman ulaşılamadı ({type(exc).__name__})",
+            "raw": "",
+        }
+
+    raw = str(raw or "").strip()
+    first_word = raw.upper().split(None, 1)[0] if raw else ""
+    approved = first_word.startswith("EVET")
+    logger.info(
+        f"[AI_VETO] {asset} {timeframe} {direction} → '{raw[:120]}' "
+        f"→ {'✅ ONAY' if approved else '⛔ VETO'}"
+    )
+    return {"approved": approved, "reason": raw[:240], "raw": raw}
 
 
 def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -1427,21 +1493,6 @@ def _compute_signal_formation(
     return score, reason, eta
 
 
-def _asymmetric_usdt_d_series(state: OracleState) -> list[float] | None:
-    """Makro sentinel'in cross_asset_warnings'ından USDT.D eğim serisi kurar.
-
-    USDT.D YÜKSELİYOR → artan seri (eğim + → kripto LONG RED).
-    USDT.D DÜŞÜYOR   → azalan seri (eğim − → kripto LONG ONAY).
-    Bilinmiyor       → None (nötr onay).
-    """
-    warns = list(getattr(state, "cross_asset_warnings", None) or [])
-    if any("USDT.D YÜKSELİYOR" in str(w) for w in warns):
-        return [8.0, 8.05, 8.10, 8.15, 8.20]
-    if any("USDT.D DÜŞÜYOR" in str(w) for w in warns):
-        return [8.20, 8.15, 8.10, 8.05, 8.00]
-    return None
-
-
 async def run_quant_engine(state: OracleState) -> OracleState:
     agent_print(
         "QUANT_ENGINE",
@@ -1524,14 +1575,9 @@ async def run_quant_engine(state: OracleState) -> OracleState:
         sweep_direction = str(h4_metrics.get("sweep_direction") or d1_metrics.get("sweep_direction") or "NONE")
         fvg_direction = str(h4_metrics.get("fvg_direction") or d1_metrics.get("fvg_direction") or "NONE")
 
-        # ── FAZ 2: ASİMETRİK MOTOR (Sweep+CHOCH & RSI Breakout & USDT.D) ──
-        asymmetric = asymmetric_long_signal(
-            df_local,
-            usdt_d_series=_asymmetric_usdt_d_series(state),
-            asset_close=df_local["close"] if df_local is not None else None,
-        )
-        asymmetric_fired = bool(asymmetric["signal"])
-        asymmetric_reason = str(asymmetric.get("reason", ""))
+        # FAZ 5 — KATI VETO: asimetrik motor artık puan BONUSU değildir.
+        # Fırsat onayı yalnızca scanner tarafında `asymmetric_signal()` (LONG/SHORT)
+        # ile yapılır. Burada eski "+0.10 bonus" MANTIĞI TAMAMEN SÖKÜLDÜ.
 
         trade_type = _decide_trade_type(
             weekly_bias, daily_bias, h4_bias, h1_bias,
@@ -1582,10 +1628,6 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 divergence_bonus += 0.05  # likidite kriptoya dönüyor → LONG onayı
             elif usdt_d_rising:
                 divergence_bonus -= 0.05  # nakde kaçış → LONG baskısı
-
-        # ── FAZ 2: Asimetrik motor onayı → skor bonusu ──
-        if asymmetric_fired:
-            divergence_bonus += 0.10  # Sweep+CHOCH & RSI Breakout & USDT.D onayı
 
         technical_unit = _technical_unit_from_timeframes(tf_metrics, divergence_bonus)
         quant_score = normalized_from_score(technical_unit * 100.0)
@@ -1689,12 +1731,6 @@ async def run_quant_engine(state: OracleState) -> OracleState:
             agent_print("QUANT_ENGINE", f"🔥 CHoCH: {h4_metrics.get('choch_direction')} | Güç: {h4_metrics.get('choch_strength')}", GREEN)
         if h4_metrics.get("rsi_trendline_break"):
             agent_print("QUANT_ENGINE", f"📈 RSI Trendline Break: {h4_metrics.get('rsi_break_direction')}", GREEN)
-        if asymmetric_fired:
-            agent_print(
-                "QUANT_ENGINE",
-                f"🎯 ASİMETRİK ONAY: {asymmetric_reason} | {asymmetric.get('macro_reason')}",
-                GREEN,
-            )
 
         return state.model_copy(
             update={
@@ -1744,10 +1780,6 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                 "choch_break_level": h4_metrics.get("choch_break_level"),
                 "rsi_trendline_break": h4_metrics.get("rsi_trendline_break"),
                 "rsi_break_direction": h4_metrics.get("rsi_break_direction"),
-                "asymmetric_reason": asymmetric_reason,
-                "asymmetric_fired": asymmetric_fired,
-                "asymmetric_macro_approved": bool(asymmetric.get("macro_approved")),
-                "asymmetric_rs_score": asymmetric.get("rs_score"),
                 "messages": [
                     f"[QUANT_ENGINE] tf_bias={biases} align={alignment_score:.2f} trade={trade_type} "
                     f"base_rr={long_levels['base_rr']} hist_score={historical_similarity_score:.1f} "
@@ -1756,8 +1788,6 @@ async def run_quant_engine(state: OracleState) -> OracleState:
                     f"[DYNAMIC_TARGET] {long_levels['dynamic_trendline_target']}", # Geometrik hedef şatılı
                     levels_shuttle # Veri Şatılı güvenli mesaj kuyruğuna yükleniyor!
                 ] + ([
-                    f"[ASYMMETRIC] {asymmetric_reason} | {asymmetric.get('macro_reason')}"
-                ] if asymmetric_fired else []) + ([
                     f"[CHOCH] {h4_metrics.get('choch_direction')} @ {h4_metrics.get('choch_break_level')} | Güç: {h4_metrics.get('choch_strength')}"
                 ] if h4_metrics.get("choch_detected") else []) + ([
                     f"[RSI_TRENDLINE] {h4_metrics.get('rsi_break_direction')} kırılımı"

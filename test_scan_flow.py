@@ -302,30 +302,6 @@ def test_scanner_offline():
     msg2 = scanner._build_start_message(21, snap)
     check("start mesajı rejim", "RISK_ON" in msg2)
 
-    # ── FASE C: composite_score @property → model_dump'a enjekte ediliyor ──
-    class _FakeState:
-        def __init__(self):
-            self._d = {"signal_label": "STRONG_BUY", "t1": 110.0, "t2": 115.0, "t3": 122.0}
-
-        def model_dump(self):
-            return dict(self._d)
-
-        @property
-        def composite_score(self) -> float:
-            return 0.77
-
-        @property
-        def is_halted(self) -> bool:
-            return False
-
-    sd = scanner._pipeline_state_to_dict(_FakeState())
-    check(
-        "state dökümü composite_score enjekte",
-        abs(float(sd.get("composite_score", 0.0)) - 0.77) < 1e-9,
-        f"got {sd.get('composite_score')}",
-    )
-    check("state dökümü is_halted False", sd.get("is_halted") is False)
-
     # ── FASE D: build_trade_plan (fiyat bazlı plan) ──
     lv = {
         "entry_zone_low": 95.0,
@@ -1406,37 +1382,48 @@ def test_faz1_purge():
 # 29. FAZ 2 — ASİMETRİK MOTOR (Sweep+CHOCH & RSI Breakout & USDT.D)
 # ─────────────────────────────────────────────────────────────────────────────
 def test_faz2_asymmetric_motors():
-    print("[29] FAZ 2 — asimetrik motor (3 motor + mock kanıt)")
+    print("[29] FAZ 5 — asimetrik motor (LONG + SHORT katı veto)")
     from core.asymmetric_engine import (
-        asymmetric_long_signal,
-        detect_rsi_divergence_trendline,
-        detect_sweep_choch_long,
+        asymmetric_signal,
+        detect_long_signal,
+        detect_short_signal,
         usdt_d_macro_filter,
     )
-    from test_asymmetric_engine import build_mock_ohlcv
+    from test_asymmetric_engine import build_mock_ohlcv, build_mock_ohlcv_short
 
-    df = build_mock_ohlcv()
+    df_long = build_mock_ohlcv()
+    df_short = build_mock_ohlcv_short()
     usdt_down = [8.20, 8.15, 8.10, 8.05, 8.00]  # USDT.D DÜŞÜYOR → onay
     usdt_up = [8.00, 8.05, 8.10, 8.15, 8.20]    # USDT.D YÜKSELİYOR → red
 
-    m1 = detect_sweep_choch_long(df)
-    check("M1 sweep+choch tetiklendi", bool(m1["sweep"] and m1["choch"]), f"got {m1}")
-    m2 = detect_rsi_divergence_trendline(df)
-    check("M2 divergence+breakout", bool(m2["divergence"] and m2["breakout"]), f"got {m2}")
+    l = detect_long_signal(df_long)
+    check("LONG motoru tetiklendi (4 şart)", bool(l["signal"]), f"got {l['reason']}")
+    check("LONG nedeni 'Fiyat Düşeni Kırdı + RSI Pozitif Uyumsuzluk'",
+          l["reason"] == "Fiyat Düşeni Kırdı + RSI Pozitif Uyumsuzluk", f"got {l['reason']}")
+    check("LONG seviyeleri üretildi", l["levels"] and l["levels"]["stop"] < l["levels"]["entry"])
+
+    s = detect_short_signal(df_short)
+    check("SHORT motoru tetiklendi (4 şart)", bool(s["signal"]), f"got {s['reason']}")
+    check("SHORT nedeni 'Fiyat Yükseleni Kırdı + RSI Negatif Uyumsuzluk'",
+          s["reason"] == "Fiyat Yükseleni Kırdı + RSI Negatif Uyumsuzluk", f"got {s['reason']}")
+    check("SHORT seviyeleri üretildi (stop yukarıda)", s["levels"] and s["levels"]["stop"] > s["levels"]["entry"])
+
     m3 = usdt_d_macro_filter(usdt_down)
     check("M3 USDT.D düşüş → onay", m3["approved"] is True, f"got {m3}")
     m3_up = usdt_d_macro_filter(usdt_up)
     check("USDT.D yükseliş → red", m3_up["approved"] is False, f"got {m3_up}")
 
-    comb = asymmetric_long_signal(df, usdt_d_series=usdt_down)
-    check("birleşik sinyal tetiklendi", comb["signal"] is True, f"got {comb['reason']}")
-    check("neden 'Sweep+CHOCH & RSI Breakout'",
-          comb["reason"] == "Sweep+CHOCH & RSI Breakout", f"got {comb['reason']}")
+    comb = asymmetric_signal(df_long, usdt_d_series=usdt_down)
+    check("birleşik LONG sinyali", comb["direction"] == "LONG" and comb["signal"] is True, f"got {comb}")
+    comb_s = asymmetric_signal(df_short, usdt_d_series=usdt_down)
+    check("birleşik SHORT sinyali", comb_s["direction"] == "SHORT" and comb_s["signal"] is True, f"got {comb_s}")
 
-    comb_rej = asymmetric_long_signal(df, usdt_d_series=usdt_up)
-    check("USDT.D yukarı → sinyal red",
-          comb_rej["signal"] is False and comb_rej["macro_approved"] is False,
-          f"got macro_approved={comb_rej['macro_approved']}")
+    # KATI VETO: motor tetiklenmeyen grafikte sinyal ASLA üretilmez
+    flat = _synth_ohlcv(n=120)
+    comb_flat = asymmetric_signal(flat, usdt_d_series=usdt_down)
+    check("sinyal yok grafikte direction None",
+          comb_flat["signal"] is False and comb_flat["direction"] is None, f"got {comb_flat['direction']}")
+    check("neden 'Sinyal Yok'", comb_flat["reason"] == "Sinyal Yok", f"got {comb_flat['reason']}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1472,12 +1459,12 @@ def test_faz3_transparency():
     from test_asymmetric_engine import build_mock_ohlcv
 
     sc = OracleScanner(None, None, {"scan_schedule": {}, "asset_universe": {}})
-    df = build_mock_ohlcv()  # Sweep+CHOCH + RSI breakout içerir
+    df = build_mock_ohlcv()  # LONG motoru tetikler
     check("kripto + USDT.D yukarı → makro veto",
           sc._categorize_elimination("BTC/USDT", df, df, True) == "macro")
-    # Mock'ta m1 tetiklenir; m1'i kırmak için sweep'siz rastgele veri
+    # Sinyal üretmeyen rastgele veri → yapısal veto (motor "Sinyal Yok")
     rand_df = _synth_ohlcv(n=60)
-    check("sweep yok → yapısal veto",
+    check("sinyal yok → yapısal veto",
           sc._categorize_elimination("BTC/USDT", rand_df, rand_df, False) == "structural")
 
     # d) Şeffaflık raporu formatı
@@ -1488,15 +1475,14 @@ def test_faz3_transparency():
 
     sc.bot = _fake_bot  # type: ignore[method-assign]
     import time as _t
-    pf_stats = {"scanned": 91, "macro_veto": 45, "structural_veto": 32,
-                "momentum_veto": 14, "none": 0, "failed": 0}
+    pf_stats = {"scanned": 91, "macro_veto": 45, "structural_veto": 46,
+                "none": 0, "failed": 0}
     asyncio.run(sc._send_scan_transparency_report(_t.monotonic(), 93, pf_stats,
                                                   [{"asset": "ASELS.IS"}, {"asset": "BTC/USDT"}]))
     msg = sent[0] if sent else ""
     check("rapor 'ORACLE TARAMA TAMAMLANDI' içerir", "ORACLE TARAMA TAMAMLANDI" in msg)
     check("rapor 'Makro Veto' içerir", "Makro Veto (USDT.D uyumsuz): 45" in msg)
-    check("rapor 'Yapısal Veto' içerir", "Yapısal Veto (Sweep+CHOCH yok): 32" in msg)
-    check("rapor 'Momentum Veto' içerir", "Momentum Veto (RSI Uyumsuzluğu/Kırılım yok): 14" in msg)
+    check("rapor 'Yapısal Veto' içerir", "Yapısal Veto (Sinyal Yok): 46" in msg)
     check("rapor 'Filtreyi Geçenler' içerir", "Filtreyi Geçenler: 2 Varlık (ASELS.IS, BTC/USDT)" in msg)
 
     # e) /oracle X abort mesajındaki sahte yüzdeler temizlendi (gerçek skorlar durur)
@@ -1561,7 +1547,7 @@ def test_faz4_steel_vest():
           f"msgs={crit_msgs}")
     check("CRITICAL hata detayı içerir", any("RAM yetersiz" in m for m in crit_msgs))
 
-    # b) live_dry_run: rapor formatı (mock veriyle, ağsız)
+    # b) live_dry_run: rapor formatı (mock veriyle, ağsız + AI veto onayı)
     from test_asymmetric_engine import build_mock_ohlcv
 
     sent2: list[str] = []
@@ -1570,16 +1556,18 @@ def test_faz4_steel_vest():
         sent2.append(msg)
 
     sc2 = OracleScanner(None, _fake_bot2, {"scan_schedule": {}, "asset_universe": {}})
-    mock_df = build_mock_ohlcv()  # M1 (Sweep+CHOCH) + M2 (RSI breakout) tetikler
+    mock_df = build_mock_ohlcv()  # LONG motoru tetikler
 
-    async def _fake_fetch(symbol: str):
+    async def _fake_fetch_tf(symbol: str, tf: str):
         if "BTC" in symbol:
-            return mock_df, mock_df
-        return _synth_ohlcv(n=60), None  # sweep yok → yapısal veto
+            return mock_df
+        return _synth_ohlcv(n=60)  # sinyal yok → yapısal veto
 
-    sc2._fetch_prefilter_data = _fake_fetch  # type: ignore[method-assign]
-    # BTC benchmark çekişini de mock'la (ağsız)
-    _scanner_mod.fetch_crypto_ohlcv = _fake_fetch  # type: ignore[assignment]
+    async def _fake_ai_approve(asset: str, tf: str, data: dict):
+        return {"approved": True, "reason": "EVET: kaliteli fırsat", "raw": "EVET: kaliteli fırsat"}
+
+    sc2._fetch_tf_ohlcv = _fake_fetch_tf  # type: ignore[method-assign]
+    sc2._ai_validator = _fake_ai_approve  # type: ignore[method-assign]
 
     class _Dom:
         usdt_d_trend = {"1d": "FALLING"}
@@ -1599,7 +1587,6 @@ def test_faz4_steel_vest():
         asyncio.run(sc2.live_dry_run(["BTC/USDT", "JPM"]))
     finally:
         _scanner_mod.get_regime_snapshot = orig_regime  # type: ignore[assignment]
-        _scanner_mod.fetch_crypto_ohlcv = __import__("tools.market_data", fromlist=["fetch_crypto_ohlcv"]).fetch_crypto_ohlcv  # type: ignore[assignment]
 
     rep = sent2[0] if sent2 else ""
     check("dry-run 'CANLI ATIŞ TESTİ' içerir", "CANLI ATIŞ TESTİ" in rep)
@@ -1616,7 +1603,7 @@ def test_faz4_steel_vest():
         sent3.append(msg)
 
     sc3 = OracleScanner(None, _fake_bot3, {"scan_schedule": {}, "asset_universe": {}})
-    sc3._fetch_prefilter_data = _fake_fetch  # type: ignore[method-assign]
+    sc3._fetch_tf_ohlcv = _fake_fetch_tf  # type: ignore[method-assign]
 
     class _DomUp:
         usdt_d_trend = {"1d": "RISING"}
@@ -1648,6 +1635,176 @@ def test_faz4_steel_vest():
     check("main.py'de CRITICAL şablonu var", "🚨 CRITICAL: Tarama motoru beklenmedik bir hatadan çöktü." in src_main)
     check("bot'ta 'test_canli_tarama' komutu kayıtlı", "test_canli_tarama" in src_bot)
     check("bot'ta '[ERROR]' izolasyonu var", "[ERROR]" in src_scanner)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 32. FAZ 5 — KATI VETO: puanlama söküldü, motor tek karar kaynağı
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz5_hard_veto():
+    print("[32] FAZ 5 — katı veto (puanlama söküldü, motor tek karar)")
+
+    # a) quant_engine artık asimetrik motora puan BONUSU eklemez
+    src_qe = Path("agents/quant_engine.py").read_text(encoding="utf-8")
+    check("quant_engine'de 'asymmetric_long_signal' import yok", "asymmetric_long_signal" not in src_qe)
+    check("quant_engine'de asimetrik bonus bloğu yok", "Asimetrik motor onayı → skor bonusu" not in src_qe)
+
+    # b) scanner._scan_single_asset artık pipeline/composite'a DAYANMAZ
+    src_sc = Path("core/scanner.py").read_text(encoding="utf-8")
+    check("scanner'da eski 'signal_label' kararı yok", "signal_label" not in src_sc)
+    check("scanner'da 'WATCHLIST_PREMIUM' sahte sinyal yok", "WATCHLIST_PREMIUM" not in src_sc)
+
+    # c) KATI VETO: motor tetiklemeyen varlık fırsat OLARAK dönmez
+    from core.scanner import OracleScanner
+    from test_asymmetric_engine import build_mock_ohlcv
+
+    async def _run_none():
+        sc = OracleScanner(None, None, {"scan_schedule": {}, "asset_universe": {}})
+        sc._last_regime = None
+        sc._elimination_log = []
+
+        async def _fake_fetch_tf(symbol: str, tf: str):
+            return _synth_ohlcv(n=120)  # sinyal yok
+
+        sc._fetch_tf_ohlcv = _fake_fetch_tf  # type: ignore[method-assign]
+        return await sc._scan_single_asset("XOM", "DEEP", "test"), sc._elimination_log
+
+    res_none, elims = asyncio.run(_run_none())
+    check("motor tetiklenmeyince fırsat YOK (None)", res_none is None, f"got {res_none}")
+    check("eleme logu 'Sinyal Yok' içerir",
+          any("Sinyal Yok" in str(e.get("reason")) for e in elims), f"got {elims}")
+
+    async def _fake_ai_approve(asset: str, tf: str, data: dict):
+        return {"approved": True, "reason": "EVET: kaliteli fırsat", "raw": "EVET: kaliteli fırsat"}
+
+    async def _fake_ai_reject(asset: str, tf: str, data: dict):
+        return {"approved": False, "reason": "HAYIR: fakeout riski yüksek", "raw": "HAYIR: fakeout riski yüksek"}
+
+    # d) Motor tetikleyen veri + AI ONAY → LONG fırsat (gerçek NEDEN)
+    async def _run_long():
+        sc2 = OracleScanner(None, None, {"scan_schedule": {}, "asset_universe": {}})
+        sc2._last_regime = None
+        sc2._elimination_log = []
+        mock = build_mock_ohlcv()
+
+        async def _fake_fetch_tf(symbol: str, tf: str):
+            return mock
+
+        sc2._fetch_tf_ohlcv = _fake_fetch_tf  # type: ignore[method-assign]
+        sc2._ai_validator = _fake_ai_approve  # type: ignore[method-assign]
+        return await sc2._scan_single_asset("BTC/USDT", "DEEP", "test")
+
+    res_long = asyncio.run(_run_long())
+    check("LONG motor + AI onay → fırsat",
+          res_long and res_long["signal"] == "LONG_FIRSAT" and res_long["direction"] == "LONG",
+          f"got {res_long and res_long.get('signal')}")
+    check("fırsat NEDEN'i gerçek motor sebebi",
+          res_long and "Fiyat Düşeni Kırdı" in (res_long.get("asymmetric_reason") or ""))
+
+    # e) SHORT motor + AI onay → fırsat (stop yukarıda)
+    from test_asymmetric_engine import build_mock_ohlcv_short
+
+    async def _run_short():
+        sc3 = OracleScanner(None, None, {"scan_schedule": {}, "asset_universe": {}})
+        sc3._last_regime = None
+        sc3._elimination_log = []
+        mock_s = build_mock_ohlcv_short()
+
+        async def _fake_fetch_tf(symbol: str, tf: str):
+            return mock_s
+
+        sc3._fetch_tf_ohlcv = _fake_fetch_tf  # type: ignore[method-assign]
+        sc3._ai_validator = _fake_ai_approve  # type: ignore[method-assign]
+        return await sc3._scan_single_asset("BTC/USDT", "DEEP", "test")
+
+    res_short = asyncio.run(_run_short())
+    check("SHORT motor + AI onay → fırsat",
+          res_short and res_short["signal"] == "SHORT_FIRSAT" and res_short["direction"] == "SHORT",
+          f"got {res_short and res_short.get('signal')}")
+    check("SHORT stop hedefi ters (stop yukarıda)",
+          res_short and float(res_short.get("stop_loss") or 0) > float(res_short.get("entry_zone_low") or 0))
+
+    # f) KURAL 3 — AI VETO: AI "HAYIR" derse sinyal YAYINLANMAZ
+    async def _run_ai_veto():
+        sc4 = OracleScanner(None, None, {"scan_schedule": {}, "asset_universe": {}})
+        sc4._last_regime = None
+        sc4._elimination_log = []
+        mock = build_mock_ohlcv()
+
+        async def _fake_fetch_tf(symbol: str, tf: str):
+            return mock
+
+        sc4._fetch_tf_ohlcv = _fake_fetch_tf  # type: ignore[method-assign]
+        sc4._ai_validator = _fake_ai_reject  # type: ignore[method-assign]
+        return await sc4._scan_single_asset("BTC/USDT", "DEEP", "test"), sc4._elimination_log
+
+    res_veto, elims_veto = asyncio.run(_run_ai_veto())
+    check("AI 'HAYIR' → fırsat YOK (None)", res_veto is None, f"got {res_veto}")
+    check("eleme logu 'AI Uzman Vetosu' içerir",
+          any("AI Uzman Vetosu" in str(e.get("reason")) for e in elims_veto), f"got {elims_veto}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 33. FAZ 6 — ÇOKLU TF (ATR) + TOLERANS + AI VETO
+# ─────────────────────────────────────────────────────────────────────────────
+def test_faz6_multitf_ai():
+    print("[33] FAZ 6 — çoklu TF (ATR) + tolerans + AI veto")
+
+    # a) KURAL 2 — _break_state toleransı (%1.5)
+    from core.asymmetric_engine import compute_atr, _break_state, detect_long_signal
+
+    check("kırılım BREAK (yukarı)", _break_state(105.0, 100.0, 0.015, "up") == "BREAK")
+    check("eşikte NEAR (%1.5 içinde)", _break_state(99.5, 100.0, 0.015, "up") == "NEAR")
+    check("uzak NO", _break_state(95.0, 100.0, 0.015, "up") == "NO")
+    check("aşağı kırılım BREAK", _break_state(95.0, 100.0, 0.015, "down") == "BREAK")
+
+    # b) KURAL 1 — ATR dinamik mesafe
+    from test_asymmetric_engine import build_mock_ohlcv
+
+    df = build_mock_ohlcv()
+    atr = compute_atr(df, 14)
+    check("ATR(14) hesaplanıyor", float(atr.iloc[-1]) > 0)
+    l = detect_long_signal(df)
+    check("ATR tabanlı dip şartı geçti (3*ATR)", l["dip_ok"] is True)
+
+    # c) KURAL 1 — çoklu TF döngüsü scanner'da kuruldu
+    src_sc = Path("core/scanner.py").read_text(encoding="utf-8")
+    check("scanner'da TF döngüsü (1h/4h/1d/1w)", '("1h", "4h", "1d", "1w")' in src_sc)
+    check("scanner'da _fetch_tf_ohlcv var", "async def _fetch_tf_ohlcv" in src_sc)
+    check("scanner'da _scan_tf_candidates var", "async def _scan_tf_candidates" in src_sc)
+    check("scanner'da AI veto bağlantısı var", "_ai_validator" in src_sc)
+
+    # d) KURAL 3 — ask_ai_expert_validator + LlmEngine.invoke_text
+    src_qe = Path("agents/quant_engine.py").read_text(encoding="utf-8")
+    src_llm = Path("tools/llm_engine.py").read_text(encoding="utf-8")
+    check("ask_ai_expert_validator var", "async def ask_ai_expert_validator" in src_qe)
+    check("LlmEngine.invoke_text var", "async def invoke_text" in src_llm)
+    check("AI veto fail-closed", "fail-closed" in src_qe)
+
+    # e) AI veto EVET/HAYIR davranışı (mock LLM)
+    import agents.quant_engine as qe
+    import tools.llm_engine as te
+
+    async def _run_ai(word: str):
+        class _FakeLlm:
+            async def invoke_text(self, *, system_prompt, user_prompt):
+                return word
+
+        orig = te.LlmEngine
+        te.LlmEngine = _FakeLlm  # type: ignore[assignment]
+        try:
+            return await qe.ask_ai_expert_validator(
+                "BTC/USDT", "4h",
+                {"direction": "LONG", "high": 100, "low": 90,
+                 "rsi_div": True, "tl_price": 95, "current": 96},
+            )
+        finally:
+            te.LlmEngine = orig  # type: ignore[assignment]
+
+    yes = asyncio.run(_run_ai("EVET: net yükseliş yapısı, kaliteli fırsat."))
+    check("AI 'EVET' → onay", yes["approved"] is True)
+
+    no = asyncio.run(_run_ai("HAYIR: tuzak mum, piyasa gürültüsü."))
+    check("AI 'HAYIR' → veto", no["approved"] is False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1687,6 +1844,8 @@ def main():
     test_faz2_asymmetric_motors()
     test_faz3_transparency()
     test_faz4_steel_vest()
+    test_faz5_hard_veto()
+    test_faz6_multitf_ai()
     dur = time.time() - t0
     print(f"\n══════ SONUÇ: {_OK} geçti, {_FAIL} başarısız ({dur:.1f}s) ══════")
     sys.exit(1 if _FAIL else 0)

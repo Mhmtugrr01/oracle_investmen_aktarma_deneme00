@@ -87,3 +87,38 @@ class LlmEngine:
                 return response
 
         raise RuntimeError("LLM structured output üretimi başarısız oldu.")
+
+    async def invoke_text(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        """Ham metin yanıtı döndürür (şema zorlaması YOK — AI veto için)."""
+        client = await self._ensure_client()
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
+
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(self._max_retry_attempts),
+            wait=wait_exponential(multiplier=2, min=2, max=8),
+            retry=retry_if_exception(_retryable_llm_exception),
+            reraise=True,
+        ):
+            with attempt:
+                response = await client.ainvoke(messages)
+                content = getattr(response, "content", response)
+                if isinstance(content, list):
+                    # Çok parçalı içerik blokları (metin blokları) birleştirilir.
+                    parts = []
+                    for block in content:
+                        if isinstance(block, dict):
+                            parts.append(str(block.get("text", block)))
+                        else:
+                            parts.append(str(getattr(block, "text", block)))
+                    content = "".join(parts)
+                return str(content).strip()
+
+        raise RuntimeError("LLM text üretimi başarısız oldu.")

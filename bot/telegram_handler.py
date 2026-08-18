@@ -759,8 +759,8 @@ class TelegramHandler:
         chat_id = update.effective_chat.id
         await update.effective_message.reply_text(
             "🔬 ORACLE CANLI ATIŞ TESTİ başlatılıyor...\n"
-            "5 majör varlık (BTC/ETH/SOL/USDT, JPM, NVDA) gerçek ccxt + yfinance "
-            "verisiyle 3 asimetrik motor + şeffaflık raporundan geçirilecek. (~1-2 dk)"
+            "5 majör varlık (BTC/ETH/SOL/AVAX/XRP) gerçek ccxt verisiyle "
+            "LONG/SHORT asimetrik motor + şeffaflık raporundan geçirilecek. (~1-2 dk)"
         )
         try:
             from core.config import load_oracle_config
@@ -778,7 +778,7 @@ class TelegramHandler:
             async def _dry_run_task() -> None:
                 try:
                     await scanner.live_dry_run(
-                        ["BTC/USDT", "ETH/USDT", "SOL/USDT", "JPM", "NVDA"]
+                        ["BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "XRP/USDT"]
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error(f"[CANLI_TEST] Canlı atış testi hatası: {exc}")

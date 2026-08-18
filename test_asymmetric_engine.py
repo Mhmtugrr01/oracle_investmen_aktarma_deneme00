@@ -1,16 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-FAZ 2 KANIT SCRIPTİ — Asimetrik Kantitatif Motor (Mock Data)
-============================================================
-Sahte OHLCV, tam olarak şunu simüle eder:
-  1) Swing Low altına iğne (Sweep) + 1-3 bar içinde Swing High üzerinde GÖVDELİ
-     kapanış (CHOCH)                    → Motor 1
-  2) Fiyat Lower Low yaparken RSI Higher Low (pozitif uyumsuzluk) + RSI düşen
-     trend çizgisini yukarı kırıyor     → Motor 2
-  3) USDT.D düşüyor (makro onay)        → Motor 3
+FAZ 5 KANIT MODÜLÜ — Katı Veto Motoru (LONG & SHORT) Mock Grafikleri
+=====================================================================
+`build_mock_ohlcv()`        → 🟢 LONG kurulumu (4 şartı birden tetikler)
+`build_mock_ohlcv_short()`  → 🔴 SHORT kurulumu (4 şartı birden tetikler)
 
-Beklenen çıktı:
-  [SCANNER] FIRSAT ONAYLANDI: MOCK_COIN -> LONG_FIRSAT (Sebep: Sweep+CHOCH & RSI Breakout)
+Bu modül `test_scan_flow.py` tarafından import edilir (kalıcı modül, silme).
 """
 
 from __future__ import annotations
@@ -19,77 +14,75 @@ import numpy as np
 import pandas as pd
 
 from core.asymmetric_engine import (
-    asymmetric_long_signal,
-    detect_sweep_choch_long,
-    detect_rsi_divergence_trendline,
+    asymmetric_signal,
+    detect_long_signal,
+    detect_short_signal,
     usdt_d_macro_filter,
 )
 
 
-def build_mock_ohlcv() -> pd.DataFrame:
-    """Sweep + CHOCH + RSI breakout grafiğini simüle eden sahte OHLCV.
-
-    Son 3 barda: [sweep, choch1, choch2] — sweep Swing_Low altına iğne atar,
-    sonraki 1-2 bar Swing_High üzerinde GÖVDELİ kapanış yapar (CHOCH).
-    """
-    n = 46
-    close = np.empty(n)
-    # 0-10 : yükseliş (95 → 107)
-    close[0:11] = np.linspace(95.0, 107.0, 11)
-    # 11-14: geri çekilme (107 → 102)
-    close[11:15] = np.linspace(107.0, 102.0, 4)
-    # 15-17: toparlanma (102 → 106)  → Swing High #1 (~107.5)
-    close[15:18] = np.linspace(102.0, 106.0, 3)
-    # 18-24: UZUN düşüş (106 → 99)   → Dip #1 bar 24 (RSI iyice düşer ~35)
-    close[18:25] = np.linspace(106.0, 99.0, 7)
-    # 25-27: toparlanma (99 → 103)   → Swing High #2 (~104)
-    close[25:28] = np.linspace(99.0, 103.0, 3)
-    # 28-30: hafif geri çekilme → kapanış 100 (Dip #2)
-    close[28] = 101.0
-    close[29] = 100.5
-    close[30] = 100.0
-    # 31-41: toparlanma (100 → 104) — base penceresi (lows 97'nin üstünde)
-    close[31:42] = np.linspace(100.0, 104.0, 11)
-    # 42   : SWEEP — low 95.5 (Dip#2=97 altına iğne), close 102 (geri döndü)
-    close[42] = 102.0
-    # 43-44: CHOCH — Swing High (~104) ÜZERİNDE gövdeyle kapanışlar
-    close[43] = 104.8
-    close[44] = 106.0
-    # 45   : devam
-    close[45] = 107.0
-
+def _ohlcv_from_close(close: np.ndarray) -> pd.DataFrame:
+    """Kapanış serisinden open/high/low/volume üretir (pivotlar doğal oluşur)."""
+    n = len(close)
     open_ = np.empty(n)
     open_[0] = close[0]
-    for i in range(1, n):
-        open_[i] = close[i - 1]
-    open_[42] = 100.0    # sweep barı (yeşil gövde)
-    open_[43] = 101.5
-    open_[44] = 103.5
-    open_[45] = 105.5
-
-    high = np.maximum(open_, close) + 1.0
-    low = np.minimum(open_, close) - 1.0
-    high[17] = 107.5   # Swing High #1
-    # Dip #1 bar 24 net bir fraktal dip olsun (sağ/sol pencereler daha yüksek)
-    low[24] = 98.5
-    low[23] = 99.6
-    low[25] = 99.2
-    low[26] = 100.5
-    low[27] = 102.0
-    low[28] = 101.5
-    low[29] = 99.8
-    low[30] = 97.0     # Dip #2 (base içinde en düşük) — sağ penceresi 97 üstü
-    low[42] = 95.5     # SWEEP: Dip#2 (97) ALTINA iğne
-    high[44] = 107.0   # CHOCH tepe
-
+    open_[1:] = close[:-1]
+    high = np.maximum(open_, close) + 0.5
+    low = np.minimum(open_, close) - 0.5
     volume = np.full(n, 1_000_000.0)
-    volume[42] = 2_500_000.0    # sweep + hacim
-    volume[43:45] = 3_000_000.0  # CHOCH barları hacimli
+    return pd.DataFrame({"open": open_, "high": high, "low": low, "close": close, "volume": volume})
 
-    df = pd.DataFrame(
-        {"open": open_, "high": high, "low": low, "close": close, "volume": volume}
-    )
-    return df
+
+def build_mock_ohlcv() -> pd.DataFrame:
+    """🟢 LONG kurulumu: zirveden ~%34 düşüş → pozitif RSI uyumsuzluğu →
+    fiyat düşen trend çizgisini yukarı kırma + RSI düşen çizgi kırılımı.
+
+    Segmanlar (n=120):
+      0-55   : 100 → 200 (yükseliş, tepe 200 @ bar55)
+      56-70  : 200 → 140 (sert düşüş → dip1, RSI çok düşer ~17)
+      71-80  : 140 → 160 (toparlanma → daha düşük tepe)
+      81-99  : dalgalı yatay düşüş (RSI yüksek kalır)
+      100    : 128 (keskin lower-low dip2)
+      101-119: 128 → 132 (ralli → düşen trendi yukarı kırar)
+    """
+    n = 120
+    close = np.empty(n)
+    close[0:56] = np.linspace(100.0, 200.0, 56)
+    close[56:71] = np.linspace(200.0, 140.0, 15)
+    close[71:81] = np.linspace(140.0, 160.0, 10)
+    close[81:100] = [
+        160, 158, 160.5, 157, 159.5, 156, 158.5, 155, 157.5, 154,
+        156.5, 153, 155.5, 152, 154.5, 151, 153.5, 150, 152.5,
+    ]
+    close[100] = 128.0
+    close[101:120] = np.linspace(128.0, 132.0, 19)
+    return _ohlcv_from_close(close)
+
+
+def build_mock_ohlcv_short() -> pd.DataFrame:
+    """🔴 SHORT kurulumu: dipten ~%72 yükseliş → negatif RSI uyumsuzluğu →
+    fiyat yükselen trend çizgisini aşağı kırma + RSI yükselen çizgi kırılımı.
+
+    Segmanlar (n=120):
+      0-55   : 200 → 100 (düşüş, dip 100 @ bar55)
+      56-70  : 100 → 160 (sert ralli → tepe1, RSI çok yükselir ~82)
+      71-80  : 160 → 140 (geri çekilme → daha yüksek dip)
+      81-99  : dalgalı yatay yükseliş (RSI düşük kalır)
+      100    : 172 (keskin higher-high tepe2)
+      101-119: 172 → 168 (düşüş → yükselen trendi aşağı kırar)
+    """
+    n = 120
+    close = np.empty(n)
+    close[0:56] = np.linspace(200.0, 100.0, 56)
+    close[56:71] = np.linspace(100.0, 160.0, 15)
+    close[71:81] = np.linspace(160.0, 140.0, 10)
+    close[81:100] = [
+        140, 142, 139.5, 143, 140.5, 144, 141.5, 145, 142.5, 146,
+        143.5, 147, 144.5, 148, 145.5, 149, 146.5, 150, 147.5,
+    ]
+    close[100] = 172.0
+    close[101:120] = np.linspace(172.0, 168.0, 19)
+    return _ohlcv_from_close(close)
 
 
 def build_btc_series() -> pd.Series:
@@ -98,29 +91,39 @@ def build_btc_series() -> pd.Series:
 
 
 def main() -> None:
-    print("══════ FAZ 2 — ASİMETRİK MOTOR MOCK KANITI ══════\n")
-    df = build_mock_ohlcv()
-    btc = build_btc_series()
+    print("══════ FAZ 5 — KATI VETO MOTORU MOCK KANITI (LONG & SHORT) ══════\n")
+    usdt_down = [8.20, 8.15, 8.10, 8.05, 8.00]  # USDT.D DÜŞÜYOR → kripto onay
 
-    m1 = detect_sweep_choch_long(df)
-    m2 = detect_rsi_divergence_trendline(df)
-    usdt_series = [8.20, 8.15, 8.10, 8.05, 8.00]  # USDT.D DÜŞÜYOR → onay
-    m3 = usdt_d_macro_filter(usdt_series)
+    df_long = build_mock_ohlcv()
+    l = detect_long_signal(df_long)
+    print(f"  🟢 LONG : signal={l['signal']} | {l['reason']}")
+    print(f"         dip_ok={l['dip_ok']} pos_div={l['pos_div']} price_break={l['price_break']} rsi_break={l['rsi_break']}")
+    if l["levels"]:
+        print(f"         levels: entry={l['levels']['entry']} stop={l['levels']['stop']} t1={l['levels']['t1']}")
 
-    print(f"  MOTOR 1 — Sweep+CHOCH : {m1['reason']} (sweep={m1['sweep']}, choch={m1['choch']}, swing_low={m1['swing_low']})")
-    print(f"  MOTOR 2 — RSI Div+Brk : {m2['reason']} (divergence={m2['divergence']}, breakout={m2['breakout']})")
-    print(f"  MOTOR 3 — USDT.D      : {m3['reason']} (onay={m3['approved']})")
+    df_short = build_mock_ohlcv_short()
+    s = detect_short_signal(df_short)
+    print(f"  🔴 SHORT: signal={s['signal']} | {s['reason']}")
+    print(f"         peak_ok={s['peak_ok']} neg_div={s['neg_div']} price_break={s['price_break']} rsi_break={s['rsi_break']}")
 
-    combined = asymmetric_long_signal(df, usdt_d_series=usdt_series, btc_close=btc, asset_close=df["close"])
-    print(f"\n  BİRLEŞİK SİNYAL        : {combined['reason']} | onay={combined['signal']}")
-    print(f"  RS_Score               : {combined['rs_score']}")
+    # Birleşik: LONG öncelikli — LONG grafiğinde LONG, SHORT grafiğinde SHORT dönmeli
+    comb_l = asymmetric_signal(df_long, usdt_d_series=usdt_down, btc_close=build_btc_series(), asset_close=df_long["close"])
+    comb_s = asymmetric_signal(df_short, usdt_d_series=usdt_down)
+    print(f"\n  BİRLEŞİK LONG grafiği : {comb_l['direction']} → {comb_l['reason']}")
+    print(f"  BİRLEŞİK SHORT grafiği: {comb_s['direction']} → {comb_s['reason']}")
 
-    if combined["signal"]:
-        # İstenen tam log satırı
-        print("\n[SCANNER] FIRSAT ONAYLANDI: MOCK_COIN -> LONG_FIRSAT (Sebep: Sweep+CHOCH & RSI Breakout)")
-        print("\n✅ KANIT: Mock veri, asimetrik motoru TAM olarak tetikledi (Sweep+CHOCH & RSI Breakout & USDT.D onayı).")
+    # Sert veto: sıradan trend (sinyal yok) motoru tetiklememeli
+    flat = _ohlcv_from_close(np.linspace(100.0, 110.0, 120))
+    comb_flat = asymmetric_signal(flat)
+    print(f"  DÜZ TREND (kontrol)  : signal={comb_flat['signal']} direction={comb_flat['direction']}")
+
+    ok = bool(l["signal"] and s["signal"] and comb_l["direction"] == "LONG"
+              and comb_s["direction"] == "SHORT" and not comb_flat["signal"])
+    if ok:
+        print("\n[SCANNER] FIRSAT ONAYLANDI: MOCK_COIN -> LONG_FIRSAT (Sebep: Fiyat Düşeni Kırdı + RSI Pozitif Uyumsuzluk)")
+        print("✅ KANIT: LONG + SHORT motorları ve katı veto (Sinyal Yok) doğru çalışıyor.")
     else:
-        print("\n❌ Mock veri motorları tetiklemedi — ayarla.")
+        print("\n❌ Mock grafikler motoru tetiklemedi — ayarla.")
         raise SystemExit(1)
 
 
