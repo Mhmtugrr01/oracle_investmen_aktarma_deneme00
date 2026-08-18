@@ -1048,6 +1048,10 @@ class OracleScanner:
                 "rsi_div": bool(sub.get("pos_div") or sub.get("neg_div")),
                 "tl_price": sub.get("price_tl"),
                 "current": sub.get("current_price"),
+                "atr": sub.get("atr"),
+                "trend_age_bars": sub.get("trend_age_bars"),
+                "body_atr_ratio": sub.get("body_atr_ratio"),
+                "volume_ratio": sub.get("volume_ratio"),
             }
             from agents.quant_engine import ask_ai_expert_validator
 
@@ -1394,6 +1398,10 @@ class OracleScanner:
                     "rsi_div": bool(sub.get("pos_div") or sub.get("neg_div")),
                     "tl_price": sub.get("price_tl"),
                     "current": sub.get("current_price"),
+                    "atr": sub.get("atr"),
+                    "trend_age_bars": sub.get("trend_age_bars"),
+                    "body_atr_ratio": sub.get("body_atr_ratio"),
+                    "volume_ratio": sub.get("volume_ratio"),
                 }
 
                 # KURAL 3: AI EXPERT VETO

@@ -42,16 +42,36 @@ async def ask_ai_expert_validator(
     rsi_div = "Var" if data.get("rsi_div") else "Yok"
     tl_price = data.get("tl_price")
     current = data.get("current")
+    atr = data.get("atr")
+    trend_age = data.get("trend_age_bars")
+    body_ratio = data.get("body_atr_ratio")
+    volume_ratio = data.get("volume_ratio")
 
+    # KURAL 3 — kırılım gücü metni (zayıf fakeout mu, hacimli majör kırılım mı?)
+    def _fmt(v, suffix: str = "") -> str:
+        if v is None:
+            return "veri yok"
+        try:
+            return f"{float(v):.2f}{suffix}"
+        except Exception:  # noqa: BLE001
+            return str(v)
+
+    body_txt = (
+        f"{_fmt(body_ratio, 'x ATR')} ({_fmt((body_ratio or 0) * 100, '%')} gövde büyüklüğü)"
+        if body_ratio is not None else "veri yok"
+    )
     prompt = (
         f"Sen dünyanın en iyi teknik analistisin. {asset} varlığı {timeframe} grafiğinde "
         f"matematiksel olarak şu durumları gösteriyor: Son tepe: {high}, Son dip: {low}, "
-        f"RSI Uyumsuzluğu: {rsi_div}, Trend Çizgisi Fiyatı: {tl_price}, "
-        f"Mevcut Fiyat: {current}. Makine bunun bir {direction} asimetrik fırsat olduğunu, "
-        f"trendin kırıldığını veya kırılmak üzere olduğunu söylüyor. Fitilleri, tuzakları "
-        f"(fakeout) ve bu veriyi hesaba katarak; bu GERÇEK VE KALİTELİ bir fırsat mı, "
-        f"yoksa bir piyasa gürültüsü mü? Sadece 'EVET' veya 'HAYIR' ile başla ve "
-        f"1 cümlelik nedenini yaz."
+        f"RSI Uyumsuzluğu: {rsi_div}, Trend Çizgisi Fiyatı: {tl_price}, Mevcut Fiyat: {current}, "
+        f"ATR(14): {_fmt(atr)}, Trend Yaşı: {trend_age if trend_age is not None else 'veri yok'} bar "
+        f"(ilk majör tepe/dip {trend_age if trend_age is not None else '?'} bar önce oluştu), "
+        f"Son Mum Kırılım Gücü: gövde {body_txt}, Hacim Oranı: {_fmt(volume_ratio, 'x')} (20 bar ortalamasına göre). "
+        f"Makine bunun bir {direction} asimetrik fırsat olduğunu, trendin kırıldığını veya "
+        f"kırılmak üzere olduğunu söylüyor. Fitilleri, tuzakları (fakeout) ve bu veriyi hesaba "
+        f"katarak; bu GERÇEK VE KALİTELİ bir fırsat mı, yoksa bir piyasa gürültüsü mü? "
+        f"Kırılımın 'zayıf bir fakeout' mu yoksa 'hacimli ve majör bir kırılım' mı olduğunu "
+        f"değerlendir. Sadece 'EVET' veya 'HAYIR' ile başla ve 1 cümlelik nedenini yaz."
     )
     # KANIT: promptu terminal loguna yaz (kullanıcı AI'ya giden istemi görmeli)
     logger.info(f"[AI_VETO] PROMPT → {prompt}")

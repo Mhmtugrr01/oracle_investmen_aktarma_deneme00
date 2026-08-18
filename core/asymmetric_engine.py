@@ -108,69 +108,92 @@ def _break_state(
     return "NO"
 
 
-def find_swing_pivots(
-    df: pd.DataFrame, window: int = 5
-) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
-    """Fraktal pivot bulucu (indeksler girdi df'ye göre 0-tabanlı).
+def _significant_peaks(
+    vals: np.ndarray,
+    min_prominence: float,
+    min_spacing: int,
+) -> list[tuple[int, float]]:
+    """Prominence tabanlı MAJÖR tepe/dip bulucu (saf NumPy, scipy YOK).
 
-    Swing High : high[i], sol/sağ `window` barın max'ı ise.
-    Swing Low  : low[i], sol/sağ `window` barın min'i ise.
+    Bir nokta ancak:
+      - yerel maksimum ise, ve
+      - prominence'ı (tepenin iki yanındaki su seviyesinin yüksek olanından
+        yüksekliği) en az `min_prominence` ise,
+      - aynı türden komşu önemli tepeyle arasında en az `min_spacing` bar varsa
+    "MAJÖR" sayılır. Böylece mikro (birbirine 3-5 bar mesafedeki) tepelerden
+    trend çizgisi çekilmez.
 
-    Düz/düşey barlarda çoklu pivot üretmemek için en az `window` bar aralıklı
-    ve sadece daha belirgin yeni seviyeler kaydedilir.
-
-    Dönüş: (swing_highs, swing_lows) — [(idx, değer), ...]
+    Dönüş: [(idx, değer), ...] — büyüklük sırasında değil, zaman sırasında.
     """
-    if df is None or len(df) < window * 2 + 1:
+    n = len(vals)
+    peaks: list[tuple[int, float]] = []
+    for i in range(1, n - 1):
+        if not np.isfinite(vals[i]):
+            continue
+        if not (vals[i] >= vals[i - 1] and vals[i] >= vals[i + 1]):
+            continue
+        # Prominence: sağa ve sola yürü, KESİN daha yüksek noktaya kadar en derin
+        # vadinin yüksek olanından tepe yüksekliğini çıkar (eşit yükseklik
+        # boundary DEĞİLDİR — standart prominence `>` kullanır).
+        left_base = vals[i]
+        for j in range(i - 1, -1, -1):
+            if vals[j] > vals[i]:
+                break
+            if vals[j] < left_base:
+                left_base = vals[j]
+        right_base = vals[i]
+        for j in range(i + 1, n):
+            if vals[j] > vals[i]:
+                break
+            if vals[j] < right_base:
+                right_base = vals[j]
+        base = max(left_base, right_base)
+        if (vals[i] - base) >= min_prominence:
+            peaks.append((i, float(vals[i])))
+    # min_spacing: zaman sırasında birbirine çok yakın önemli tepelerde
+    # daha belirgin olanı koru.
+    filtered: list[tuple[int, float]] = []
+    for p in peaks:
+        if not filtered or p[0] - filtered[-1][0] >= min_spacing:
+            filtered.append(p)
+        elif p[1] > filtered[-1][1]:
+            filtered[-1] = p
+    return filtered
+
+
+def find_significant_pivots(
+    df: pd.DataFrame,
+    prominence_mult: float = 1.5,
+    min_spacing: int = 20,
+    atr_period: int = 14,
+) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
+    """KURAL 1 — MAJÖR PİVOT (Significant Swing High/Low) tespiti.
+
+    Sıradan (distance=3/5) küçük pencere KULLANILMAZ. Pivot ancak en az
+    `prominence_mult * ATR(14)` kadarlık bir yükseliş/düşüş yaptıysa ve aynı
+    türden önceki majör pivottan en az `min_spacing` bar uzaktaysa "majör"dir.
+    Böylece trend çizgisi her TF'de kendi volatilitesine (ATR) göre ölçeklenir.
+
+    Dönüş: (sig_highs, sig_lows) — [(idx, değer), ...] (zaman sırasında).
+    """
+    if df is None or len(df) < 30:
         return [], []
     highs = df["high"].astype(float).values
     lows = df["low"].astype(float).values
-    n = len(df)
-    swing_highs: list[tuple[int, float]] = []
-    swing_lows: list[tuple[int, float]] = []
-    for i in range(window, n - window):
-        left_h = np.nanmax(highs[i - window : i])
-        right_h = np.nanmax(highs[i + 1 : i + 1 + window])
-        if highs[i] >= left_h and highs[i] >= right_h:
-            if not swing_highs or i - swing_highs[-1][0] >= window or highs[i] > swing_highs[-1][1] + 1e-9:
-                swing_highs.append((i, float(highs[i])))
-        left_l = np.nanmin(lows[i - window : i])
-        right_l = np.nanmin(lows[i + 1 : i + 1 + window])
-        if lows[i] <= left_l and lows[i] <= right_l:
-            if not swing_lows or i - swing_lows[-1][0] >= window or lows[i] < swing_lows[-1][1] - 1e-9:
-                swing_lows.append((i, float(lows[i])))
-    return swing_highs, swing_lows
-
-
-def _rsi_swings(
-    rsi: pd.Series, window: int = 5
-) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
-    """RSI serisinin fraktal tepelerini/diplerini bulur (NaN güvenli).
-
-    Dönüş: (rsi_peaks, rsi_troughs) — [(idx, değer), ...] (mutlak indeks).
-    """
-    vals = rsi.astype(float).values
-    n = len(vals)
-    peaks: list[tuple[int, float]] = []
-    troughs: list[tuple[int, float]] = []
-    for i in range(window, n - window):
-        if not np.isfinite(vals[i]):
-            continue
-        left_h = vals[i - window : i]
-        right_h = vals[i + 1 : i + 1 + window]
-        left_h = left_h[np.isfinite(left_h)]
-        right_h = right_h[np.isfinite(right_h)]
-        if len(left_h) and len(right_h) and vals[i] >= left_h.max() and vals[i] >= right_h.max():
-            if not peaks or i - peaks[-1][0] >= window or vals[i] > peaks[-1][1] + 1e-9:
-                peaks.append((i, float(vals[i])))
-        left_l = vals[i - window : i]
-        right_l = vals[i + 1 : i + 1 + window]
-        left_l = left_l[np.isfinite(left_l)]
-        right_l = right_l[np.isfinite(right_l)]
-        if len(left_l) and len(right_l) and vals[i] <= left_l.min() and vals[i] <= right_l.min():
-            if not troughs or i - troughs[-1][0] >= window or vals[i] < troughs[-1][1] - 1e-9:
-                troughs.append((i, float(vals[i])))
-    return peaks, troughs
+    atr = compute_atr(df, atr_period)
+    if atr is not None and len(atr) and np.isfinite(atr.iloc[-1]) and float(atr.iloc[-1]) > 0:
+        atr_val = float(atr.iloc[-1])
+    else:
+        # ATR yoksa volatilite vekili: son 30 bar yüksek-düşük medyanı
+        h30 = np.nanmedian(highs[-30:]) if len(highs) >= 30 else np.nanmax(highs)
+        l30 = np.nanmedian(lows[-30:]) if len(lows) >= 30 else np.nanmin(lows)
+        atr_val = max((h30 - l30), float(np.nanmax(highs) * 0.02))
+    min_prom = atr_val * prominence_mult
+    sig_highs = _significant_peaks(highs, min_prom, min_spacing)
+    # Dipler: negatif alanda tepe arayıp geri çevir.
+    sig_lows_neg = _significant_peaks(-lows, min_prom, min_spacing)
+    sig_lows = [(i, -v) for i, v in sig_lows_neg]
+    return sig_highs, sig_lows
 
 
 def _trendline(
@@ -187,16 +210,16 @@ def _trendline(
 
 
 def _build_levels(direction: str, df: pd.DataFrame) -> dict[str, Any]:
-    """Sinyal seviyelerini (giriş/stop/hedefler) yapısal pivotlardan üretir.
+    """Sinyal seviyelerini (giriş/stop/hedefler) MAJÖR pivotlardan üretir.
 
-    LONG : stop son Swing_Low'un ALTINA (kayıp aşağıda, hedefler yukarıda).
-    SHORT: stop son Swing_High'ın ÜSTÜNE (kayıp yukarıda, hedefler aşağıda).
+    LONG : stop son MAJÖR Swing_Low'un ALTINA (kayıp aşağıda, hedefler yukarıda).
+    SHORT: stop son MAJÖR Swing_High'ın ÜSTÜNE (kayıp yukarıda, hedefler aşağıda).
     Hedefler R-çarpanı ile: T1=2R, T2=3.5R, T3=5R.
     """
     entry = float(df["close"].astype(float).iloc[-1])
-    swing_highs, swing_lows = find_swing_pivots(df, window=5)
+    sig_highs, sig_lows = find_significant_pivots(df)
     if direction == "LONG":
-        stop = float(swing_lows[-1][1]) if swing_lows else float(df["low"].astype(float).tail(20).min())
+        stop = float(sig_lows[-1][1]) if sig_lows else float(df["low"].astype(float).tail(20).min())
         if stop >= entry:  # geçersiz stop koruması
             stop = float(df["low"].astype(float).tail(20).min())
         risk = entry - stop
@@ -206,7 +229,7 @@ def _build_levels(direction: str, df: pd.DataFrame) -> dict[str, Any]:
         t2 = entry + 3.5 * risk
         t3 = entry + 5.0 * risk
     else:
-        stop = float(swing_highs[-1][1]) if swing_highs else float(df["high"].astype(float).tail(20).max())
+        stop = float(sig_highs[-1][1]) if sig_highs else float(df["high"].astype(float).tail(20).max())
         if stop <= entry:
             stop = float(df["high"].astype(float).tail(20).max())
         risk = stop - entry
@@ -285,31 +308,27 @@ def detect_long_signal(
     pivot_window: int = 5,
     lookback: int = 100,
     tolerance: float = 0.015,
+    prominence_mult: float = 1.5,
+    min_spacing: int = 20,
 ) -> dict[str, Any]:
-    """LONG kararı — 4 şartın HEPSİ sağlanmalı (KURAL 1 + 2).
+    """LONG kararı — 4 şartın HEPSİ sağlanmalı (KURAL 1 + 2 + 3 verisi).
 
-    KURAL 1: Zirveden uzaklık sabit yüzde DEĞİL — `3 * ATR(14)` ile ölçeklenir.
-    KURAL 2: Trend kırılımı %1.5 toleranslıdır (BREAK veya NEAR sayılır).
+    KURAL 1: Yalnızca MAJÖR pivotlar (ATR*1.5 prominence + min 20 bar aralık).
+    KURAL 2: RSI, Fiyat'ın MAJÖR tepelerine AYNI İNDEKSTE hizalı okunur.
+    KURAL 3: AI promptu için ATR / trend yaşı / kırılım gücü hesaplanır.
 
     Dönüş: {"signal", "direction", "reason", "dip_ok", "pos_div",
             "price_break", "rsi_break", "price_state", "rsi_state",
-            "near", "last_high", "last_low", "price_tl", "current_price", "levels"}
+            "near", "last_high", "last_low", "price_tl", "current_price",
+            "atr", "trend_age_bars", "body_atr_ratio", "volume_ratio", "levels"}
     """
     res: dict[str, Any] = {
-        "signal": False,
-        "direction": "LONG",
-        "reason": "",
-        "dip_ok": False,
-        "pos_div": False,
-        "price_break": False,
-        "rsi_break": False,
-        "price_state": "NO",
-        "rsi_state": "NO",
-        "near": False,
-        "last_high": None,
-        "last_low": None,
-        "price_tl": None,
-        "current_price": None,
+        "signal": False, "direction": "LONG", "reason": "",
+        "dip_ok": False, "pos_div": False,
+        "price_break": False, "rsi_break": False,
+        "price_state": "NO", "rsi_state": "NO", "near": False,
+        "last_high": None, "last_low": None, "price_tl": None, "current_price": None,
+        "atr": None, "trend_age_bars": None, "body_atr_ratio": None, "volume_ratio": None,
         "levels": None,
     }
     if df is None or len(df) < 60:
@@ -318,29 +337,47 @@ def detect_long_signal(
 
     close = df["close"].astype(float)
     high = df["high"].astype(float)
-    low = df["low"].astype(float)
     n = len(df)
     current = float(close.iloc[-1])
     res["current_price"] = current
 
     rsi = compute_rsi(close, rsi_period)
-    swing_highs, swing_lows = find_swing_pivots(df, window=pivot_window)
-
-    res["last_high"] = swing_highs[-1][1] if swing_highs else None
-    res["last_low"] = swing_lows[-1][1] if swing_lows else None
-
-    # 1) Zirveden Uzaklık — DİNAMİK ATR (sabit %30 SİLİNDİ)
-    hh100 = float(high.tail(lookback).max())
-    atr_last = float(compute_atr(df, 14).iloc[-1])
+    atr_series = compute_atr(df, 14)
+    atr_last = float(atr_series.iloc[-1])
     if not np.isfinite(atr_last) or atr_last <= 0:
-        atr_last = hh100 * 0.05  # ATR yoksa volatilite vekili (güvenli fallback)
+        atr_last = float(high.tail(lookback).max()) * 0.05
+    res["atr"] = atr_last
+
+    # KURAL 1 — MAJÖR pivotlar
+    sig_highs, sig_lows = find_significant_pivots(
+        df, prominence_mult=prominence_mult, min_spacing=min_spacing
+    )
+    res["last_high"] = sig_highs[-1][1] if sig_highs else None
+    res["last_low"] = sig_lows[-1][1] if sig_lows else None
+    res["trend_age_bars"] = (n - 1 - sig_highs[0][0]) if sig_highs else None
+
+    # KURAL 3 — kırılım gücü verisi
+    try:
+        open_arr = df["open"].astype(float)
+        body = float(close.iloc[-1]) - float(open_arr.iloc[-1])
+        res["body_atr_ratio"] = (body / atr_last) if atr_last > 0 else None
+        vol = df["volume"].astype(float) if "volume" in df.columns else None
+        if vol is not None and len(vol) >= 20:
+            vol_avg = float(vol.rolling(20).mean().iloc[-1])
+            if np.isfinite(vol_avg) and vol_avg > 0:
+                res["volume_ratio"] = float(vol.iloc[-1]) / vol_avg
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 1) Zirveden Uzaklık — DİNAMİK ATR
+    hh100 = float(high.tail(lookback).max())
     dip_ok = current < (hh100 - 3.0 * atr_last)
     res["dip_ok"] = dip_ok
 
-    # 2) RSI Pozitif Uyumsuzluk (fiyat Lower Low + RSI Higher Low)
+    # 2) RSI Pozitif Uyumsuzluk (son 2 MAJÖR dip + HİZALI RSI — KURAL 2)
     pos_div = False
-    if len(swing_lows) >= 2:
-        (i1, l1), (i2, l2) = swing_lows[-2], swing_lows[-1]
+    if len(sig_lows) >= 2:
+        (i1, l1), (i2, l2) = sig_lows[-2], sig_lows[-1]
         price_ll = l2 < l1
         r1, r2 = rsi.iloc[i1], rsi.iloc[i2]
         if (not pd.isna(r1)) and (not pd.isna(r2)):
@@ -348,18 +385,18 @@ def detect_long_signal(
             pos_div = bool(price_ll and rsi_hl)
     res["pos_div"] = pos_div
 
-    # 3) FİYAT Düşeni Kırma — TOLERANSLI (son 2 Swing_High → düşen çizgi)
+    # 3) FİYAT Düşeni Kırma (son 2 MAJÖR tepe → düşen çizgi, TOLERANSLI)
     price_state = "NO"
     price_tl = None
-    if len(swing_highs) >= 2:
-        line = _trendline(swing_highs[-2], swing_highs[-1])
+    if len(sig_highs) >= 2:
+        line = _trendline(sig_highs[-2], sig_highs[-1])
         if line is not None:
             m, b = line
-            if m < 0:  # DÜŞEN trend çizgisi
+            if m < 0:
                 price_tl = m * (n - 1) + b
                 price_state = _break_state(current, price_tl, tolerance, "up")
-    if price_state == "NO" and len(swing_highs) >= 1:
-        y_ref = swing_highs[-1][1]  # en son lokal tepe (yatay direnç)
+    if price_state == "NO" and len(sig_highs) >= 1:
+        y_ref = sig_highs[-1][1]
         st = _break_state(current, y_ref, tolerance, "up")
         if st != "NO":
             price_state = st
@@ -368,20 +405,24 @@ def detect_long_signal(
     res["price_state"] = price_state
     res["price_tl"] = price_tl
 
-    # 4) RSI Düşeni Kırma — TOLERANSLI
-    rsi_peaks, _ = _rsi_swings(rsi, pivot_window)
+    # 4) RSI Düşeni Kırma — Fiyat'ın MAJÖR tepelerine HİZALI RSI (KURAL 2)
     rsi_state = "NO"
-    if len(rsi_peaks) >= 2:
-        line = _trendline(rsi_peaks[-2], rsi_peaks[-1])
-        if line is not None:
-            m, b = line
-            if m < 0:
-                y_now = m * (n - 1) + b
-                rsi_state = _break_state(float(rsi.iloc[-1]), y_now, tolerance, "up")
-    if rsi_state == "NO" and len(rsi_peaks) >= 1:
-        st = _break_state(float(rsi.iloc[-1]), rsi_peaks[-1][1], tolerance, "up")
-        if st != "NO":
-            rsi_state = st
+    if len(sig_highs) >= 2:
+        rp1 = (sig_highs[-2][0], float(rsi.iloc[sig_highs[-2][0]]))
+        rp2 = (sig_highs[-1][0], float(rsi.iloc[sig_highs[-1][0]]))
+        if (not pd.isna(rp1[1])) and (not pd.isna(rp2[1])):
+            line = _trendline(rp1, rp2)
+            if line is not None:
+                m, b = line
+                if m < 0:
+                    y_now = m * (n - 1) + b
+                    rsi_state = _break_state(float(rsi.iloc[-1]), y_now, tolerance, "up")
+    if rsi_state == "NO" and len(sig_highs) >= 1:
+        r_last = float(rsi.iloc[sig_highs[-1][0]])
+        if not pd.isna(r_last):
+            st = _break_state(float(rsi.iloc[-1]), r_last, tolerance, "up")
+            if st != "NO":
+                rsi_state = st
     res["rsi_break"] = rsi_state == "BREAK"
     res["rsi_state"] = rsi_state
 
@@ -418,23 +459,17 @@ def detect_short_signal(
     pivot_window: int = 5,
     lookback: int = 100,
     tolerance: float = 0.015,
+    prominence_mult: float = 1.5,
+    min_spacing: int = 20,
 ) -> dict[str, Any]:
-    """SHORT kararı — 4 şartın HEPSİ sağlanmalı (KURAL 1 + 2)."""
+    """SHORT kararı — 4 şartın HEPSİ sağlanmalı (KURAL 1 + 2 + 3 verisi)."""
     res: dict[str, Any] = {
-        "signal": False,
-        "direction": "SHORT",
-        "reason": "",
-        "peak_ok": False,
-        "neg_div": False,
-        "price_break": False,
-        "rsi_break": False,
-        "price_state": "NO",
-        "rsi_state": "NO",
-        "near": False,
-        "last_high": None,
-        "last_low": None,
-        "price_tl": None,
-        "current_price": None,
+        "signal": False, "direction": "SHORT", "reason": "",
+        "peak_ok": False, "neg_div": False,
+        "price_break": False, "rsi_break": False,
+        "price_state": "NO", "rsi_state": "NO", "near": False,
+        "last_high": None, "last_low": None, "price_tl": None, "current_price": None,
+        "atr": None, "trend_age_bars": None, "body_atr_ratio": None, "volume_ratio": None,
         "levels": None,
     }
     if df is None or len(df) < 60:
@@ -448,23 +483,40 @@ def detect_short_signal(
     res["current_price"] = current
 
     rsi = compute_rsi(close, rsi_period)
-    swing_highs, swing_lows = find_swing_pivots(df, window=pivot_window)
-
-    res["last_high"] = swing_highs[-1][1] if swing_highs else None
-    res["last_low"] = swing_lows[-1][1] if swing_lows else None
-
-    # 1) Dipten Uzaklık — DİNAMİK ATR (sabit %30 SİLİNDİ)
-    ll100 = float(low.tail(lookback).min())
-    atr_last = float(compute_atr(df, 14).iloc[-1])
+    atr_series = compute_atr(df, 14)
+    atr_last = float(atr_series.iloc[-1])
     if not np.isfinite(atr_last) or atr_last <= 0:
-        atr_last = ll100 * 0.05
+        atr_last = float(low.tail(lookback).min()) * 0.05
+    res["atr"] = atr_last
+
+    sig_highs, sig_lows = find_significant_pivots(
+        df, prominence_mult=prominence_mult, min_spacing=min_spacing
+    )
+    res["last_high"] = sig_highs[-1][1] if sig_highs else None
+    res["last_low"] = sig_lows[-1][1] if sig_lows else None
+    res["trend_age_bars"] = (n - 1 - sig_lows[0][0]) if sig_lows else None
+
+    try:
+        open_arr = df["open"].astype(float)
+        body = float(close.iloc[-1]) - float(open_arr.iloc[-1])
+        res["body_atr_ratio"] = (body / atr_last) if atr_last > 0 else None
+        vol = df["volume"].astype(float) if "volume" in df.columns else None
+        if vol is not None and len(vol) >= 20:
+            vol_avg = float(vol.rolling(20).mean().iloc[-1])
+            if np.isfinite(vol_avg) and vol_avg > 0:
+                res["volume_ratio"] = float(vol.iloc[-1]) / vol_avg
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 1) Dipten Uzaklık — DİNAMİK ATR
+    ll100 = float(low.tail(lookback).min())
     peak_ok = current > (ll100 + 3.0 * atr_last)
     res["peak_ok"] = peak_ok
 
-    # 2) RSI Negatif Uyumsuzluk (fiyat Higher High + RSI Lower High)
+    # 2) RSI Negatif Uyumsuzluk (son 2 MAJÖR tepe + HİZALI RSI — KURAL 2)
     neg_div = False
-    if len(swing_highs) >= 2:
-        (i1, h1), (i2, h2) = swing_highs[-2], swing_highs[-1]
+    if len(sig_highs) >= 2:
+        (i1, h1), (i2, h2) = sig_highs[-2], sig_highs[-1]
         price_hh = h2 > h1
         r1, r2 = rsi.iloc[i1], rsi.iloc[i2]
         if (not pd.isna(r1)) and (not pd.isna(r2)):
@@ -472,18 +524,18 @@ def detect_short_signal(
             neg_div = bool(price_hh and rsi_lh)
     res["neg_div"] = neg_div
 
-    # 3) FİYAT Yükseleni Kırma — TOLERANSLI
+    # 3) FİYAT Yükseleni Kırma (son 2 MAJÖR dip → yükselen çizgi, TOLERANSLI)
     price_state = "NO"
     price_tl = None
-    if len(swing_lows) >= 2:
-        line = _trendline(swing_lows[-2], swing_lows[-1])
+    if len(sig_lows) >= 2:
+        line = _trendline(sig_lows[-2], sig_lows[-1])
         if line is not None:
             m, b = line
-            if m > 0:  # YÜKSELEN trend çizgisi
+            if m > 0:
                 price_tl = m * (n - 1) + b
                 price_state = _break_state(current, price_tl, tolerance, "down")
-    if price_state == "NO" and len(swing_lows) >= 1:
-        y_ref = swing_lows[-1][1]  # en son lokal dip (yatay destek)
+    if price_state == "NO" and len(sig_lows) >= 1:
+        y_ref = sig_lows[-1][1]
         st = _break_state(current, y_ref, tolerance, "down")
         if st != "NO":
             price_state = st
@@ -492,20 +544,24 @@ def detect_short_signal(
     res["price_state"] = price_state
     res["price_tl"] = price_tl
 
-    # 4) RSI Yükseleni Kırma — TOLERANSLI
-    _, rsi_troughs = _rsi_swings(rsi, pivot_window)
+    # 4) RSI Yükseleni Kırma — Fiyat'ın MAJÖR diplerine HİZALI RSI (KURAL 2)
     rsi_state = "NO"
-    if len(rsi_troughs) >= 2:
-        line = _trendline(rsi_troughs[-2], rsi_troughs[-1])
-        if line is not None:
-            m, b = line
-            if m > 0:
-                y_now = m * (n - 1) + b
-                rsi_state = _break_state(float(rsi.iloc[-1]), y_now, tolerance, "down")
-    if rsi_state == "NO" and len(rsi_troughs) >= 1:
-        st = _break_state(float(rsi.iloc[-1]), rsi_troughs[-1][1], tolerance, "down")
-        if st != "NO":
-            rsi_state = st
+    if len(sig_lows) >= 2:
+        rt1 = (sig_lows[-2][0], float(rsi.iloc[sig_lows[-2][0]]))
+        rt2 = (sig_lows[-1][0], float(rsi.iloc[sig_lows[-1][0]]))
+        if (not pd.isna(rt1[1])) and (not pd.isna(rt2[1])):
+            line = _trendline(rt1, rt2)
+            if line is not None:
+                m, b = line
+                if m > 0:
+                    y_now = m * (n - 1) + b
+                    rsi_state = _break_state(float(rsi.iloc[-1]), y_now, tolerance, "down")
+    if rsi_state == "NO" and len(sig_lows) >= 1:
+        r_last = float(rsi.iloc[sig_lows[-1][0]])
+        if not pd.isna(r_last):
+            st = _break_state(float(rsi.iloc[-1]), r_last, tolerance, "down")
+            if st != "NO":
+                rsi_state = st
     res["rsi_break"] = rsi_state == "BREAK"
     res["rsi_state"] = rsi_state
 

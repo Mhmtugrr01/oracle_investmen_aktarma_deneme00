@@ -1766,6 +1766,35 @@ def test_faz6_multitf_ai():
     l = detect_long_signal(df)
     check("ATR tabanlı dip şartı geçti (3*ATR)", l["dip_ok"] is True)
 
+    # b2) KURAL 1 — MAJÖR pivot tespiti (ATR prominence + >=20 bar aralık)
+    from core.asymmetric_engine import find_significant_pivots
+
+    sig_h, sig_l = find_significant_pivots(df)
+    check("majör tepe bulundu", len(sig_h) >= 2, f"got {sig_h}")
+    check("majör dip bulundu", len(sig_l) >= 2, f"got {sig_l}")
+    if len(sig_h) >= 2:
+        check("majör tepeler >=20 bar arayla",
+              sig_h[-1][0] - sig_h[-2][0] >= 20, f"got {sig_h[-2:]}")
+
+    # KURAL 3 — zenginleştirilmiş motor verisi
+    check("LONG motor ATR döndürür", l["atr"] is not None and l["atr"] > 0)
+    check("LONG motor trend yaşı döndürür", l["trend_age_bars"] is not None and l["trend_age_bars"] > 0)
+    check("LONG motor kırılım gücü (gövde/ATR) döndürür", l["body_atr_ratio"] is not None)
+    check("LONG motor hacim oranı döndürür", l["volume_ratio"] is not None and l["volume_ratio"] > 0)
+
+    # Eski mikro pivot fonksiyonları TAMAMEN SİLİNDİ
+    src_ae = Path("core/asymmetric_engine.py").read_text(encoding="utf-8")
+    check("'find_swing_pivots' silindi", "def find_swing_pivots" not in src_ae)
+    check("'_rsi_swings' silindi", "def _rsi_swings" not in src_ae)
+    check("'find_significant_pivots' var", "def find_significant_pivots" in src_ae)
+
+    # KURAL 3 — AI promptu zenginleşti (ATR/trend yaşı/kırılım gücü)
+    src_qe2 = Path("agents/quant_engine.py").read_text(encoding="utf-8")
+    check("AI promptu 'ATR(14)' içerir", "ATR(14)" in src_qe2)
+    check("AI promptu 'Trend Yaşı' içerir", "Trend Yaşı" in src_qe2)
+    check("AI promptu 'Kırılım Gücü' içerir", "Kırılım Gücü" in src_qe2)
+    check("AI promptu 'Hacim Oranı' içerir", "Hacim Oranı" in src_qe2)
+
     # c) KURAL 1 — çoklu TF döngüsü scanner'da kuruldu
     src_sc = Path("core/scanner.py").read_text(encoding="utf-8")
     check("scanner'da TF döngüsü (1h/4h/1d/1w)", '("1h", "4h", "1d", "1w")' in src_sc)
